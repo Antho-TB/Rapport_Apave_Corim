@@ -1,0 +1,19 @@
+# Environnement
+.venv/
+__pycache__/
+
+# Fichiers de configuration locaux
+.env
+.env.*
+*.json
+
+# Dossiers d'archives et données
+archives/
+IA Apave Corim/
+test_import.xlsx
+*.pdf
+*.xlsx
+
+# Mac/Windows
+.DS_Store
+Thumbs.db
