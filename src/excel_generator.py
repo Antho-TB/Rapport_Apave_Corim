@@ -1,16 +1,40 @@
-# Module de génération du fichier Excel
-# Apprentissage : Ce module utilise Pandas ou OpenPyXL pour créer un fichier tableur.
-# Il est important de bien respecter l'ordre et le nom des colonnes attendues par Corim
-# pour que l'import manuel se déroule sans erreur.
+"""
+[ARCHITECTURE] Génération du format pivot (Rapport_Apave_Corim)
+
+Rôle global :
+Ce module est en charge de la conversion de la structure d'objets (JSON/Dict) en un
+fichier physique Excel (.xlsx) qui respecte au pixel près le template d'import attendu par l'ERP Corim.
+
+Stratégie métier (Dataframe Alignment) :
+L'importation dans l'ERP échouera si une colonne manque ou est mal orthographiée.
+La stratégie consiste à définir un "schéma directeur" (la liste des colonnes Corim), 
+à intégrer les données trouvées par l'IA, et à remplir automatiquement de vide (vide ou "nan") 
+les colonnes exigées par Corim mais non pertinentes pour un rapport Apave.
+"""
+
 import pandas as pd
+import logging
 import os
 
 def generate_corim_excel(data: dict, output_path: str) -> str:
     """
-    Génère le fichier Excel d'import Corim à partir des données structurées.
-    data doit être un dictionnaire contenant une clé 'interventions' (liste de dictionnaires).
+    Génère un fichier Excel d'import Corim à partir des données extraites.
+    
+    Stratégie :
+    Au lieu de créer un Excel "from scratch", on initialise un DataFrame vide contenant
+    exhaustivement TOUTES les colonnes du template Corim. On fait ensuite un mapping des
+    valeurs extraites, et on réordonne. Cela garantit la compatibilité ascendante avec l'ERP.
+    
+    Args:
+        data (dict): Dictionnaire contenant la clé 'interventions'.
+        output_path (str): Le chemin absolu où écrire le fichier Excel.
+        
+    Returns:
+        str: Le chemin du fichier généré.
     """
-    # Colonnes standards extraites du modèle Corim
+    logging.info(f"[INFO] Initialisation de la génération de l'Excel vers {output_path}")
+    
+    # Colonnes standards extraites du modèle d'import Corim
     columns = [
         'INTERVENTION_MERE', 'NUMERO', 'LIBE_INTER', 'APPE_HABIT', 'PARC', 'STATUT', 
         'TYPE_MAINT', 'CODEST_MAINT', 'CODE_SPEC', 'CODE_NATT', 'DEMANDE', 'COMPTE_RENDU', 
@@ -24,19 +48,26 @@ def generate_corim_excel(data: dict, output_path: str) -> str:
         'INTERV_ORIG', 'REF_EXTERNE', 'COMMENTAIRE_INTERNE', 'CAUSE'
     ]
     
-    # Création d'un DataFrame vide avec les bonnes colonnes
-    df = pd.DataFrame(columns=columns)
-    
-    # Si nous avons des données, nous les ajoutons
-    interventions = data.get("interventions", [])
-    if interventions:
-        df_data = pd.DataFrame(interventions)
-        # On s'assure que les colonnes manquantes dans data mais présentes dans le template sont rajoutées
-        for col in columns:
-            if col not in df_data.columns:
-                df_data[col] = ""
-        # On réordonne les colonnes selon le template
-        df = df_data[columns]
+    try:
+        df = pd.DataFrame(columns=columns)
         
-    df.to_excel(output_path, index=False)
+        interventions = data.get("interventions", [])
+        if interventions:
+            df_data = pd.DataFrame(interventions)
+            
+            # Application de la règle métier : ajout des colonnes manquantes
+            for col in columns:
+                if col not in df_data.columns:
+                    df_data[col] = ""
+                    
+            # Tri final pour correspondre au format d'ingestion de Corim
+            df = df_data[columns]
+            
+        df.to_excel(output_path, index=False)
+        logging.info("[SUCCÈS] Le fichier Excel d'import Corim a été généré.")
+        
+    except Exception as e:
+        logging.error(f"[ERREUR] Échec lors de la génération de l'Excel : {e}", exc_info=True)
+        raise
+        
     return output_path
