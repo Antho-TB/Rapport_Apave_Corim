@@ -2,15 +2,34 @@ import streamlit as st
 import os
 import shutil
 from datetime import datetime
-from dotenv import load_dotenv
+from azure.identity import DefaultAzureCredential
+from azure.keyvault.secrets import SecretClient
+import logging
 
 from src.pdf_extractor import extract_text_from_pdf
 from src.ai_processor import parse_apave_text_to_corim_json
 from src.excel_generator import generate_corim_excel
 
-# Apprentissage : On charge les variables d'environnement (comme la clé API) depuis le fichier .env
-load_dotenv()
+# --- Standard NUBO : Chargement des secrets via Azure Key Vault ---
+try:
+    vault_url = "https://kv-tb-ia-agents-secrets.vault.azure.net/"
+    credential = DefaultAzureCredential()
+    secret_client = SecretClient(vault_url=vault_url, credential=credential)
+    
+    # Injection des secrets GCP/Gemini dans l'environnement
+    os.environ["GEMINI_PROJECT_ID"] = secret_client.get_secret("GEMINI-PROJECT-ID").value
+    os.environ["GEMINI_LOCATION"] = secret_client.get_secret("GEMINI-LOCATION").value
+    
+    # Pour le fichier JSON de credentials GCP, on récupère le contenu du JSON stocké 
+    # dans le Key Vault et on le réécrit temporairement (ou on utilise le SDK GCP en mémoire)
+    gcp_json_content = secret_client.get_secret("GCP-CREDENTIALS-JSON").value
+    temp_gcp_path = os.path.join(os.getcwd(), "gcp_credentials_temp.json")
+    with open(temp_gcp_path, "w") as f:
+        f.write(gcp_json_content)
+    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = temp_gcp_path
 
+except Exception as e:
+    logging.warning(f"[NUBO SEC] Impossible de charger les secrets depuis le Key Vault : {e}")
 # Configuration de la page Streamlit. J'ai enlevé les emojis pour respecter la sobriété demandée.
 st.set_page_config(page_title="Import Apave vers Corim", layout="centered")
 
