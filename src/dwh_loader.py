@@ -46,9 +46,16 @@ class Config:
 
     Junior Tip : ATTENTION, ce projet a DEUX Key Vault différents. Celui du
     pipeline IA (`kv-tb-ia-agents-secrets`, GEMINI_*) sert à Vertex AI. Celui-ci
-    (`kv-dtpf-prod`) sert au DWH PostgreSQL, avec le compte de service partagé
-    `myreport` documenté dans le skill azure-tb. Ne jamais confondre les deux,
-    ni utiliser un compte nominal pour un pipeline automatisé.
+    (`kv-dtpf-prod`) sert au DWH PostgreSQL.
+
+    Compte utilisé : `dtpf_sylob_anthony_bezille_prod` (secrets
+    `psql-prod-sylob-anthony-bezille-login/-password`), PAS le compte partagé
+    `myreport`. C'est le même principe d'isolation que sur Data-Achat/FUSEAU,
+    où réutiliser le compte MyReport pour un pipeline tiers avait été identifié
+    comme une violation à corriger (ADR ERP Achat du 10/06). Le schéma
+    `apave_corim` est créé à la main par ce compte (comme `achat` et
+    `appro_raw`), hors Terraform : c'est le pattern TB Groupe pour les schémas
+    métier bootstrap (voir ADR Colibri du 24/06).
     """
 
     KEY_VAULT_NAME: str = os.getenv("DWH_KEY_VAULT_NAME", "kv-dtpf-prod")
@@ -93,8 +100,8 @@ class Config:
         )
         return URL.create(
             drivername="postgresql+psycopg2",
-            username=client.get_secret("psql-prod-sylob-myreport-login").value,
-            password=client.get_secret("psql-prod-sylob-myreport-password").value,
+            username=client.get_secret("psql-prod-sylob-anthony-bezille-login").value,
+            password=client.get_secret("psql-prod-sylob-anthony-bezille-password").value,
             host=cls.PG_HOST,
             port=cls.PG_PORT,
             database=cls.PG_DB,

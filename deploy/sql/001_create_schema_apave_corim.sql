@@ -7,7 +7,11 @@
 -- (cf. decisions_log/20260624_appro_ingestion_colibri.md).
 --
 -- A executer manuellement (psql ou DBeaver) sur dtpf_sylob_prod, VPN Stormshield
--- actif. Idempotent : peut etre rejoue sans casser l'existant (IF NOT EXISTS).
+-- actif, avec le compte dtpf_sylob_anthony_bezille_prod (pas myreport : meme
+-- principe d'isolation que achat.* et appro_raw sur Data-Achat/FUSEAU, cf. ADR
+-- ERP Achat du 10/06). Schema bootstrap hors Terraform, comme achat et appro_raw
+-- (ADR Colibri du 24/06). Idempotent : peut etre rejoue sans casser l'existant
+-- (IF NOT EXISTS).
 
 CREATE SCHEMA IF NOT EXISTS apave_corim;
 
