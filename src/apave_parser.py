@@ -117,6 +117,29 @@ def _extraire_elements_non_verifies(bloc: str) -> str:
     return " ".join(l.strip() for l in match.group(1).splitlines() if l.strip())
 
 
+def _extraire_date_verification(bloc: str) -> str:
+    """
+    Récupère la date de vérification Apave du bloc (ex: '28/01/2026'), présente
+    systématiquement sous la forme "Date de la vérification JJ/MM/AAAA".
+
+    Junior Tip (correction du 22/07, suite relecture des annotations Maxence) :
+    dans le modèle d'import annoté, les colonnes DATEDEB_REEL et DATEFIN_REEL
+    (jaunes, donc réellement utilisées) contiennent toutes deux le même
+    placeholder "[DATE ITV APAVE]" : Corim veut cette date de vérification en
+    début ET fin réelle (la vérification se fait en une seule journée, pas de
+    plage horaire précise dans le rapport Apave). On ne connaît pas l'heure
+    exacte : on retient 00:00 par convention, à confirmer avec Richard si Corim
+    a besoin d'une heure réelle.
+    """
+    match = re.search(r"Date de la vérification\s+(\d{2})/(\d{2})/(\d{4})", bloc)
+    return match.groups() if match else None
+
+
+def _formater_date_corim(jour: str, mois: str, annee: str) -> str:
+    """Formate JJ/MM/AAAA en AAAAMMJJ HH:mm (format Corim imposé), heure conventionnelle 00:00."""
+    return f"{annee}{mois}{jour} 00:00"
+
+
 def _extraire_par_ailleurs(bloc: str) -> str:
     """Récupère le texte d'une remarque complémentaire ('Par ailleurs'), si présente."""
     match = re.search(r"Par ailleurs\s*\n(.*?)(?=\nDate\s*:|\Z)", bloc, re.DOTALL)
@@ -199,26 +222,55 @@ def parse_apave_report(texte: str) -> dict:
         cas = _classifier_bloc(bloc)
         statut_a_confirmer = False
 
+        date_verif = _extraire_date_verification(bloc)
+        if date_verif:
+            jour, mois, annee = date_verif
+            mois_annee = f"{mois}/{annee}"
+            date_corim = _formater_date_corim(jour, mois, annee)
+        else:
+            # Pas de date trouvée dans ce bloc : on ne l'invente pas, on laisse
+            # vide plutôt que de faire échouer tout le rapport pour ça (rare,
+            # jamais observé sur les 2 rapports réels testés).
+            mois_annee = ""
+            date_corim = ""
+
         if cas == "DEFAUT":
             observation = _extraire_observations(bloc) or _extraire_par_ailleurs(bloc)
             compte_rendu = observation or f"Anomalie relevée sur {designation}."
             libe_inter = f"Défaut relevé {appe_habit}"
-            statut, type_maint, codest_maint = "A", "CO", "CORR SUITE CTRL"
+            statut, codest_maint = "A", "CORR SUITE CTRL"
         elif cas == "CLOTURE":
             compte_rendu = "Clôture de l'intervention suite au rapport de vérification périodique Apave, aucune anomalie détectée."
             libe_inter = f"Clôture VGP Apave {appe_habit}"
-            statut, type_maint, codest_maint = "H", "PR", "REGLEMENTAIRE"
+            statut, codest_maint = "H", "REGLEMENTAIRE"
         elif cas == "NON_VERIFIE":
             compte_rendu = "Équipement non vérifié : en panne ou hors service lors de la vérification Apave. Intervention complémentaire à prévoir."
             libe_inter = f"Équipement non vérifié {appe_habit}"
-            statut, type_maint, codest_maint = "A", "CO", "CORR SUITE CTRL"
+            statut, codest_maint = "A", "CORR SUITE CTRL"
         else:  # PARTIEL
             detail = _extraire_elements_non_verifies(bloc)
             compte_rendu = (
                 f"Vérification partielle ({detail})." if detail else "Vérification partielle."
             ) + " Cas particulier, nature technique à confirmer avec Richard avant import."
             libe_inter = f"Vérification partielle {appe_habit}"
-            statut, type_maint, codest_maint = "A", "CO", ""
+            statut, codest_maint = "A", ""
+
+        # TYPE_MAINT (correction du 22/07, 2e relecture des annotations Maxence) :
+        # la colonne n'est PAS surlignée en jaune dans le modèle (donc pas parmi
+        # les colonnes réellement utilisées), et Maxence la laisse VIDE sur ses 3
+        # lignes d'exemple (5, 6, 7 - CLOTURE, cas ambigu, DEFAUT), malgré la
+        # mention "Obligatoire" dans la doc de colonne. On suit l'usage réel
+        # observé plutôt que la doc générique du template : vide partout.
+        type_maint = ""
+
+        # Modèle annoté Maxence (610 - Modèle d'import.xlsx, C5/C6) : LIBE_INTER
+        # se termine par le mois/année de l'intervention Apave (ex: "01/2026").
+        # Le préfixe (désignation équipement) est ensuite éventuellement remplacé
+        # par corim_mapping.py avec le "Libellé parc" de l'export Corim, plus
+        # fiable que ce texte générique (voir MOIS_ANNEE ci-dessous, conservé
+        # pour permettre cette réécriture après coup).
+        if mois_annee:
+            libe_inter = f"{libe_inter} {mois_annee}"
 
         # Cas signalé par Maxence lui-même dans son modèle annoté (610 - Modèle
         # d'import.xlsx, ligne 6, cellule STATUT en rouge "E ou T ou H ? Voir
@@ -243,11 +295,14 @@ def parse_apave_report(texte: str) -> dict:
             "PARC": appe_habit,
             "STATUT": statut,
             "TYPE_MAINT": type_maint,
+            "DATEDEB_REEL": date_corim,
+            "DATEFIN_REEL": date_corim,
             "DEMANDEUR": "utilisateur batch",
             "COMMENTAIRE_INTERNE": commentaire_interne,
             "CODE_NATT": "",
             "CODEST_MAINT": codest_maint,
             "CAS_PDF": cas,
+            "MOIS_ANNEE": mois_annee,
             "STATUT_A_CONFIRMER": statut_a_confirmer,
             "INTERVENTION_MERE": "",
             "NUMERO": "",

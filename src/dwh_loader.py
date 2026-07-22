@@ -109,6 +109,23 @@ class Config:
         )
 
 
+def _vers_timestamp(valeur_corim: str | None):
+    """
+    Convertit une date Corim "AAAAMMJJ HH:mm" (ex: '20260128 00:00') en objet
+    datetime compatible TIMESTAMPTZ. Retourne None si vide ou mal formée
+    (on ne bloque jamais l'insertion pour une date manquante).
+    """
+    if not valeur_corim:
+        return None
+    from datetime import datetime
+
+    try:
+        return datetime.strptime(valeur_corim, "%Y%m%d %H:%M")
+    except ValueError:
+        logger.warning(f"[ATTENTION] Date Corim mal formée ignorée : {valeur_corim!r}")
+        return None
+
+
 def get_engine():
     """Crée le moteur SQLAlchemy vers dtpf_sylob_prod (VPN Stormshield requis)."""
     return create_engine(Config.get_pg_url())
@@ -173,11 +190,11 @@ def enregistrer_rapport(
                 text("""
                     INSERT INTO apave_corim.interventions_extraites
                         (rapport_id, appe_habit, cas_pdf, libe_inter, demande, compte_rendu, statut, type_maint,
-                         intervention_mere, numero, interv_orig, code_natt, codest_maint,
+                         datedeb_reel, datefin_reel, intervention_mere, numero, interv_orig, code_natt, codest_maint,
                          a_traiter_manuellement)
                     VALUES
                         (:rapport_id, :appe_habit, :cas_pdf, :libe_inter, :demande, :compte_rendu, :statut, :type_maint,
-                         :intervention_mere, :numero, :interv_orig, :code_natt, :codest_maint,
+                         :datedeb_reel, :datefin_reel, :intervention_mere, :numero, :interv_orig, :code_natt, :codest_maint,
                          :a_traiter_manuellement)
                 """),
                 {
@@ -189,6 +206,11 @@ def enregistrer_rapport(
                     "compte_rendu": itv.get("COMPTE_RENDU", ""),
                     "statut": itv.get("STATUT", ""),
                     "type_maint": itv.get("TYPE_MAINT", ""),
+                    # Format source "AAAAMMJJ HH:mm" (convention Corim) -> psycopg2 caste
+                    # en TIMESTAMPTZ via to_timestamp cote SQL n'est pas fait ici : on
+                    # passe la valeur brute, None si absente, pour rester simple ETL.
+                    "datedeb_reel": _vers_timestamp(itv.get("DATEDEB_REEL")),
+                    "datefin_reel": _vers_timestamp(itv.get("DATEFIN_REEL")),
                     "intervention_mere": itv.get("INTERVENTION_MERE") or None,
                     "numero": itv.get("NUMERO") or None,
                     "interv_orig": itv.get("INTERV_ORIG") or None,

@@ -51,7 +51,30 @@ class Intervention(BaseModel):
     APPE_HABIT: str = Field(description="Nom ou référence de l'équipement, toujours préfixé par MACH0 (ex: 'MACH0347')", default="")
     PARC: str = Field(description="Référence Parc si disponible (souvent la même valeur que APPE_HABIT)", default="")
     STATUT: str = Field(description="'A' pour une création (cas défaut ou non vérifié), 'H' pour une clôture (cas sans observation, logo vert)", default="A")
-    TYPE_MAINT: str = Field(description="Toujours 'CO' pour Correctif (création) ou 'PR' pour les clôtures/mises à jour", default="CO")
+    TYPE_MAINT: str = Field(
+        description="Laisser VIDE. Colonne non surlignée comme 'utilisée' dans le modèle annoté par Maxence, "
+                     "et laissée vide sur ses 3 lignes d'exemple malgré la doc générique du template Corim "
+                     "qui la dit 'obligatoire'. On suit l'usage réel : ne rien inventer ici.",
+        default="",
+    )
+    MOIS_ANNEE: str = Field(
+        description="Mois/année de la date de vérification Apave trouvée dans le bloc équipement, au format "
+                     "'MM/AAAA' (ex: '01/2026'). Champ technique interne (pas une colonne Corim), utilisé "
+                     "ensuite par src/corim_mapping.py pour reconstruire LIBE_INTER avec le vrai libellé "
+                     "équipement de l'export Corim.",
+        default="",
+    )
+    DATEDEB_REEL: str = Field(
+        description="Date-heure de début réel, format AAAAMMJJ HH:mm. Doit être la date de vérification Apave "
+                     "trouvée dans le bloc équipement (ligne 'Date de la vérification JJ/MM/AAAA'), heure 00:00 "
+                     "par convention (le rapport ne donne pas d'heure précise). Colonne réellement utilisée par Corim.",
+        default="",
+    )
+    DATEFIN_REEL: str = Field(
+        description="Date-heure de fin réelle, même règle et même valeur que DATEDEB_REEL (vérification faite en "
+                     "une seule journée). Colonne réellement utilisée par Corim.",
+        default="",
+    )
     DEMANDEUR: str = Field(description="Toujours 'utilisateur batch'", default="utilisateur batch")
     COMMENTAIRE_INTERNE: str = Field(description="Numéro du rapport Apave", default="")
     CODE_NATT: str = Field(
@@ -115,25 +138,37 @@ def parse_apave_text_to_corim_json(text: str) -> dict:
         1. APPE_HABIT : Doit TOUJOURS commencer par "MACH0". Exemples : si l'équipement est "347", tu extrais "MACH0347".
         2. DEMANDE reste TOUJOURS vide (colonne inutilisée dans le vrai process Corim, confirmé sur le modèle
            annoté par Maxence). Le détail va dans COMPTE_RENDU, jamais dans DEMANDE.
-        3. Gestion des statuts et interventions (classification CAS_PDF) :
+        3. DATEDEB_REEL et DATEFIN_REEL : cherche dans le bloc équipement la ligne "Date de la vérification
+           JJ/MM/AAAA" et convertis-la en "AAAAMMJJ 00:00" (même valeur pour les deux champs, heure 00:00 par
+           convention car le rapport ne donne pas d'heure). Colonnes réellement utilisées par Corim (confirmé
+           sur le modèle annoté par Maxence) : ne les laisse PAS vides si la date est présente dans le PDF.
+        4. MOIS_ANNEE = mois/année de cette même date de vérification, au format "MM/AAAA" (ex: "01/2026").
+           LIBE_INTER se termine par cette même valeur (ex: "Clôture VGP Apave MACH0347 01/2026") : c'est un
+           texte de repli, le préfixe sera ensuite remplacé par corim_mapping.py avec le vrai libellé
+           équipement de l'export Corim si disponible, mais MOIS_ANNEE doit être rempli séparément pour que
+           cette réécriture reste possible.
+        5. TYPE_MAINT reste TOUJOURS vide. Colonne non surlignée comme "utilisée" dans le modèle annoté par
+           Maxence, et laissée vide sur ses 3 lignes d'exemple malgré la doc générique du template qui la dit
+           "obligatoire" : on suit l'usage réel, pas la doc générique.
+        6. Gestion des statuts et interventions (classification CAS_PDF) :
            - Cas "DEFAUT" (logo croix / avec observation) : il y a une non-conformité.
-             * STATUT="A" (Créé), TYPE_MAINT="CO", CODEST_MAINT="CORR SUITE CTRL".
+             * STATUT="A" (Créé), CODEST_MAINT="CORR SUITE CTRL".
              * LIBE_INTER : un résumé court de la remarque Apave. COMPTE_RENDU : la remarque complète (le défaut).
              * DEMANDEUR : "utilisateur batch".
            - Cas "CLOTURE" (logo vert / sans observation) : l'équipement est conforme, rien à faire dessus.
-             * STATUT="H" (Clôturé), TYPE_MAINT="PR", CODEST_MAINT="REGLEMENTAIRE".
+             * STATUT="H" (Clôturé), CODEST_MAINT="REGLEMENTAIRE".
              * LIBE_INTER : "Clôture VGP Apave [APPE_HABIT]". COMPTE_RENDU : résumé de la conformité constatée.
            - Cas "NON_VERIFIE" (logo orange / panne, hors service, non vérifié) :
-             * STATUT="A" (Créé), TYPE_MAINT="CO", CODEST_MAINT="CORR SUITE CTRL".
+             * STATUT="A" (Créé), CODEST_MAINT="CORR SUITE CTRL".
              * COMPTE_RENDU : le motif de non-vérification tel que rédigé par Apave.
            - Cas "PARTIEL" (vérification partielle sur un équipement à nature technique non standard, cas rare) :
-             * STATUT="A", TYPE_MAINT="CO", CODEST_MAINT="" (vide, cas particulier à trancher avec Richard).
+             * STATUT="A", CODEST_MAINT="" (vide, cas particulier à trancher avec Richard).
              * Cette ligne sera de toute façon isolée pour traitement manuel, ne cherche pas à la deviner finement.
-        4. IMPORTANT : NE JAMAIS renseigner INTERVENTION_MERE, NUMERO, INTERV_ORIG ou CODE_NATT.
+        7. IMPORTANT : NE JAMAIS renseigner INTERVENTION_MERE, NUMERO, INTERV_ORIG ou CODE_NATT.
            Ce sont des identifiants et codes internes à la base Corim, invisibles depuis le PDF Apave.
            Les inventer produirait un import qui échoue silencieusement chez Corim. Laisse-les à leur valeur par défaut (vide) :
            ils seront complétés après coup à partir d'un export Corim réel (voir src/corim_mapping.py).
-        5. COMMENTAIRE_INTERNE : Le numéro du rapport Apave (ex: A59735423-009-1) si tu le trouves au début du document.
+        8. COMMENTAIRE_INTERNE : Le numéro du rapport Apave (ex: A59735423-009-1) si tu le trouves au début du document.
         """
         
         response = client.models.generate_content(

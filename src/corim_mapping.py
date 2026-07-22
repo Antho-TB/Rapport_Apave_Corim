@@ -50,6 +50,10 @@ COLONNES_ALIAS: dict[str, list[str]] = {
     "numero_itv": ["Numéro", "NUMERO"],
     "code_natt": ["Code nature d'intervention", "CODE_NATT"],
     "codest_maint": ["Code type d'intervention", "CODEST_MAINT"],
+    # Découvert le 22/07 en relisant les annotations du modèle Maxence : le
+    # placeholder "[A RECUPERER SUR EXPORT CORIM]" sur LIBE_INTER correspond à
+    # ce libellé (ex: "Presse à balles HSM"), pas à un texte à générer nous-même.
+    "libelle_parc": ["Libellé parc", "LIBE_PARC"],
 }
 
 
@@ -110,6 +114,7 @@ def load_corim_export(export_path: str) -> dict[str, dict]:
 
     col_natt = _resoudre_colonne(df, COLONNES_ALIAS["code_natt"])
     col_codest = _resoudre_colonne(df, COLONNES_ALIAS["codest_maint"])
+    col_libelle = _resoudre_colonne(df, COLONNES_ALIAS["libelle_parc"])
 
     index: dict[str, dict] = {}
 
@@ -121,6 +126,7 @@ def load_corim_export(export_path: str) -> dict[str, dict]:
         numero_itv = str(row.get(col_numero, "")).strip()
         code_natt = str(row.get(col_natt, "") or "").strip() if col_natt else ""
         codest_maint = str(row.get(col_codest, "") or "").strip() if col_codest else ""
+        libelle_parc = str(row.get(col_libelle, "") or "").strip() if col_libelle else ""
 
         index[code_parc] = {
             "numero_itv": "" if numero_itv.lower() == "nan" else numero_itv,
@@ -130,6 +136,7 @@ def load_corim_export(export_path: str) -> dict[str, dict]:
             "cas_particulier": False,
             "code_natt": "" if code_natt.lower() == "nan" else code_natt,
             "codest_maint": "" if codest_maint.lower() == "nan" else codest_maint,
+            "libelle_parc": "" if libelle_parc.lower() == "nan" else libelle_parc,
         }
 
     logging.info(f"[SUCCES] {len(index)} équipement(s) indexé(s) depuis l'export Corim.")
@@ -210,6 +217,15 @@ def enrich_interventions_with_corim_numbers(
                 f"[INFO] {appe_habit} : code candidat pour CODEST_MAINT détecté ('{match['codest_maint']}') "
                 "mais non appliqué automatiquement, à confirmer avec Richard avant réutilisation."
             )
+
+        # LIBE_INTER : le modèle annoté par Maxence (610 - Modèle d'import.xlsx,
+        # C5/C6) attend "[libellé équipement issu de l'export Corim] [mois/année
+        # intervention Apave]", pas un texte générique inventé par le parseur/le
+        # LLM. Si l'export fournit ce libellé, on l'utilise ; sinon on garde le
+        # LIBE_INTER généré en amont (fallback, jamais pire que l'existant).
+        if match.get("libelle_parc"):
+            mois_annee = itv.get("MOIS_ANNEE", "")
+            itv["LIBE_INTER"] = f"{match['libelle_parc']} {mois_annee}".strip()
 
         enriched.append(itv)
 
