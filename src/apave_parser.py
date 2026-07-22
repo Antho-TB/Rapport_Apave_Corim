@@ -310,4 +310,13 @@ def parse_apave_report(texte: str) -> dict:
         })
 
     logging.info(f"[SUCCES] {len(interventions)} intervention(s) extraite(s) sans appel LLM.")
-    return {"interventions": interventions}
+
+    # Bug corrigé le 22/07 : avant cette clé explicite, batch_processor.py
+    # devait reconstituer numero_rapport à partir de interventions[0]["COMMENTAIRE_INTERNE"],
+    # qui porte désormais le suffixe "[STATUT ITV MERE A CONFIRMER AVEC RICHARD]"
+    # pour les cas DEFAUT. Résultat : la clé d'upsert DWH (numero_rapport, nom_fichier)
+    # changeait à chaque run selon la première intervention du bloc, créant un
+    # doublon en base au lieu de rafraîchir le rapport existant. On expose ici la
+    # valeur propre, déjà calculée en tête de fonction, pour que l'appelant n'ait
+    # plus jamais besoin de la déduire d'un champ métier annexe.
+    return {"numero_rapport": numero_rapport, "interventions": interventions}

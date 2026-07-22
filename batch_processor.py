@@ -168,7 +168,13 @@ def process_new_files():
             # le schéma avant la première utilisation.
             if _DWH_DISPONIBLE:
                 try:
-                    numero_rapport = structured_data["interventions"][0]["COMMENTAIRE_INTERNE"] if structured_data.get("interventions") else filename
+                    # Bug corrigé le 22/07 : lire COMMENTAIRE_INTERNE de la première
+                    # intervention cassait la clé d'upsert dès qu'un flag y était ajouté
+                    # (ex: "[STATUT ITV MERE A CONFIRMER AVEC RICHARD]" sur les cas
+                    # DEFAUT), créant un doublon en base à chaque run au lieu de
+                    # rafraîchir le rapport existant. numero_rapport est maintenant
+                    # exposé proprement par parse_apave_report/parse_apave_text_to_corim_json.
+                    numero_rapport = structured_data.get("numero_rapport") or filename
                     engine = get_engine()
                     enregistrer_rapport(engine, numero_rapport, filename, methode_extraction, structured_data.get("interventions", []))
                 except Exception as dwh_error:

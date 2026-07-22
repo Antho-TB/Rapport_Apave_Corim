@@ -16,8 +16,15 @@ nous garantissons que le dictionnaire retourné contiendra toujours les clés ex
 import os
 import json
 import logging
+import re
 from google import genai
 from pydantic import BaseModel, Field
+
+# Même regex que apave_parser._extraire_numero_rapport : le numéro de rapport
+# Apave est déterministe (jamais halluciné, contrairement au reste du texte
+# soumis au LLM), donc on l'extrait ici aussi par regex plutôt que de faire
+# confiance à Gemini pour le recopier fidèlement.
+_RE_NUMERO_RAPPORT = re.compile(r"N°\s*de rapport\s*:\s*(\S+)")
 
 # --- Définition des schémas de données (Data Contracts) ---
 
@@ -180,9 +187,16 @@ def parse_apave_text_to_corim_json(text: str) -> dict:
             },
         )
         logging.info("[SUCCÈS] Analyse Gemini terminée.")
-        return json.loads(response.text)
-        
+        resultat = json.loads(response.text)
+        # Numéro de rapport calculé par regex (pas par le LLM, voir _RE_NUMERO_RAPPORT
+        # ci-dessus), même clé "numero_rapport" que parse_apave_report, pour que
+        # batch_processor.py/app.py n'aient qu'un seul champ à lire quel que soit
+        # le chemin d'extraction utilisé.
+        match = _RE_NUMERO_RAPPORT.search(text)
+        resultat["numero_rapport"] = match.group(1) if match else ""
+        return resultat
+
     except Exception as e:
         logging.error(f"[ERREUR] Échec de la requête Gemini : {e}", exc_info=True)
         # Dégradation gracieuse : on retourne un dictionnaire vide plutôt que de faire crasher l'app
-        return {"interventions": []}
+        return {"numero_rapport": "", "interventions": []}
