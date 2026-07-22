@@ -5,6 +5,8 @@ __pycache__/
 # Fichiers de configuration locaux
 .env
 .env.*
+!.env.template
+!.env.example
 *.json
 
 # Dossiers d'archives et données

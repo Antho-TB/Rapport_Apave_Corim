@@ -23,31 +23,43 @@ import logging
 import pandas as pd
 
 from src.pdf_extractor import extract_text_from_pdf
+from src.apave_parser import parse_apave_report, RapportFormatInconnu
 from src.ai_processor import parse_apave_text_to_corim_json
 from src.excel_generator import generate_corim_excel
 from src.corim_mapping import load_corim_export, enrich_interventions_with_corim_numbers
 
-# --- Configuration Log & Securité ---
-# Stratégie : Centralisation des secrets via Azure Key Vault pour empêcher toute compromission 
-# de compte de service GCP en local ou sur GitHub.
-try:
-    vault_url = "https://kv-tb-ia-agents-secrets.vault.azure.net/"
-    credential = DefaultAzureCredential()
-    secret_client = SecretClient(vault_url=vault_url, credential=credential)
-    
-    os.environ["GEMINI_PROJECT_ID"] = secret_client.get_secret("GEMINI-PROJECT-ID").value
-    os.environ["GEMINI_LOCATION"] = secret_client.get_secret("GEMINI-LOCATION").value
-    
-    # GCP nécessite physiquement un fichier pour `GOOGLE_APPLICATION_CREDENTIALS` par défaut.
-    # Nous le récupérons du Key Vault et le provisionnons de manière éphémère.
-    gcp_json_content = secret_client.get_secret("GCP-CREDENTIALS-JSON").value
-    temp_gcp_path = os.path.join(os.getcwd(), "gcp_credentials_temp.json")
-    with open(temp_gcp_path, "w", encoding="utf-8") as f:
-        f.write(gcp_json_content)
-    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = temp_gcp_path
 
-except Exception as e:
-    logging.warning(f"[NUBO SEC] Impossible de charger les secrets depuis le Key Vault : {e}")
+def _get_gemini_credentials() -> bool:
+    """
+    Charge les secrets Key Vault nécessaires à Gemini, uniquement en repli.
+
+    Junior Tip : depuis le passage à l'extraction déterministe (apave_parser.py,
+    décision du 22/07), Gemini n'est plus sollicité par défaut. On ne paie le
+    coût d'un appel Key Vault que si un PDF ne colle plus au moteur de template
+    Apave connu (RapportFormatInconnu). Retourne True si les credentials sont
+    prêts, False sinon (Gemini alors indisponible pour ce fichier).
+    """
+    if os.environ.get("GOOGLE_APPLICATION_CREDENTIALS"):
+        return True
+    try:
+        vault_url = "https://kv-tb-ia-agents-secrets.vault.azure.net/"
+        credential = DefaultAzureCredential()
+        secret_client = SecretClient(vault_url=vault_url, credential=credential)
+
+        os.environ["GEMINI_PROJECT_ID"] = secret_client.get_secret("GEMINI-PROJECT-ID").value
+        os.environ["GEMINI_LOCATION"] = secret_client.get_secret("GEMINI-LOCATION").value
+
+        # GCP nécessite physiquement un fichier pour `GOOGLE_APPLICATION_CREDENTIALS` par défaut.
+        # Nous le récupérons du Key Vault et le provisionnons de manière éphémère.
+        gcp_json_content = secret_client.get_secret("GCP-CREDENTIALS-JSON").value
+        temp_gcp_path = os.path.join(os.getcwd(), "gcp_credentials_temp.json")
+        with open(temp_gcp_path, "w", encoding="utf-8") as f:
+            f.write(gcp_json_content)
+        os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = temp_gcp_path
+        return True
+    except Exception as e:
+        logging.warning(f"[NUBO SEC] Impossible de charger les secrets depuis le Key Vault (repli Gemini indisponible) : {e}")
+        return False
 
 st.set_page_config(page_title="Import Apave vers Corim", layout="centered")
 st.title("Outil d'Import Apave vers Corim via IA")
@@ -74,14 +86,24 @@ if uploaded_file is not None:
     try:
         with st.spinner("Extraction du texte PDF..."):
             text = extract_text_from_pdf(temp_pdf_path)
-            
-        with st.spinner("Analyse par l'IA (Gemini)... Cela peut prendre une minute."):
-            structured_data = parse_apave_text_to_corim_json(text)
+
+        # Structuration : extraction déterministe en priorité (rapide, gratuite,
+        # testable), Gemini uniquement en repli si le format n'est pas reconnu.
+        try:
+            with st.spinner("Analyse du rapport (extraction déterministe)..."):
+                structured_data = parse_apave_report(text)
+        except RapportFormatInconnu as format_error:
+            st.warning(f"Format non reconnu par l'extraction déterministe ({format_error}). Repli sur l'IA (Gemini).")
+            if not _get_gemini_credentials():
+                st.error("Repli Gemini indisponible (Key Vault injoignable). Traitement annulé.")
+                raise
+            with st.spinner("Analyse par l'IA (Gemini)... Cela peut prendre une minute."):
+                structured_data = parse_apave_text_to_corim_json(text)
 
         # Alignement des numéros Corim (NUMERO / INTERV_ORIG) à partir de l'export
-        # réel fourni par Maxence. Le LLM ne les fournit jamais volontairement
-        # (voir Junior Tip dans src/ai_processor.py).
-        corim_export_path = os.path.join(os.getcwd(), "IA Apave Corim", "Export ITV tests pour Anthony.xls")
+        # réel fourni par Maxence. Ni le parseur déterministe ni le LLM ne les
+        # fournissent volontairement (voir Junior Tip dans src/ai_processor.py).
+        corim_export_path = os.path.join(os.getcwd(), "IA Apave Corim", "Export ITV tests pour Anthony.xlsx")
         if os.path.exists(corim_export_path) and structured_data.get("interventions"):
             with st.spinner("Alignement des numéros Corim..."):
                 corim_index = load_corim_export(corim_export_path)

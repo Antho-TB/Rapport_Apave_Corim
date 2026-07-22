@@ -21,9 +21,19 @@ from azure.identity import DefaultAzureCredential
 from azure.keyvault.secrets import SecretClient
 
 from src.pdf_extractor import extract_text_from_pdf
+from src.apave_parser import parse_apave_report, RapportFormatInconnu
 from src.ai_processor import parse_apave_text_to_corim_json
 from src.excel_generator import generate_corim_excel
 from src.corim_mapping import load_corim_export, enrich_interventions_with_corim_numbers
+
+# Chargement DWH optionnel : nécessite le schéma apave_corim (voir deploy/sql/) et
+# le VPN Stormshield actif. Import protégé pour ne pas bloquer le pipeline Excel
+# si sqlalchemy/psycopg2 ne sont pas encore installés (cf. requirements.txt du 22/07).
+try:
+    from src.dwh_loader import get_engine, enregistrer_rapport
+    _DWH_DISPONIBLE = True
+except ImportError:
+    _DWH_DISPONIBLE = False
 
 # Configuration du Logging façon Lead Data
 logging.basicConfig(
@@ -42,7 +52,13 @@ DIR_ARCHIVE = os.path.join(BASE_DIR, "Traité, archive")
 # Sans ce fichier, les colonnes NUMERO/INTERVENTION_MERE/INTERV_ORIG restent vides
 # et l'import Corim ne pourra ni clôturer ni chaîner les interventions.
 # Junior Tip : valeur en dur pour le POC. À déplacer en Config/Key Vault une fois validé.
-CORIM_EXPORT_PATH = os.path.join(BASE_DIR, "Export ITV tests pour Anthony.xls")
+CORIM_EXPORT_PATH = os.path.join(BASE_DIR, "Export ITV tests pour Anthony.xlsx")
+
+# Credentials Azure/GCP chargés à la demande uniquement (voir _get_gemini_credentials) :
+# depuis le passage à l'extraction déterministe (apave_parser.py), Gemini n'est plus
+# sollicité que si le format du PDF n'est pas reconnu. Pas la peine de payer le coût
+# d'un appel Key Vault sur un lot qui n'en a pas besoin.
+_gemini_credentials_path = None
 
 def setup_directories():
     """Vérifie et crée l'arborescence des dossiers magiques."""
@@ -51,25 +67,38 @@ def setup_directories():
             os.makedirs(directory)
             logging.info(f"[INFO] Dossier créé : {directory}")
 
-def setup_azure_credentials():
-    """Récupère les clés depuis Azure Key Vault pour Vertex AI."""
+def _get_gemini_credentials():
+    """
+    Récupère (une seule fois par run) les clés Key Vault nécessaires à Gemini.
+
+    Junior Tip : appelée uniquement en repli, quand apave_parser.py lève
+    RapportFormatInconnu (PDF qui ne colle plus au moteur de template Apave
+    connu). Le cas nominal n'a plus besoin d'Azure Key Vault ni de credentials
+    GCP du tout, ce qui supprime une dépendance et un point de défaillance pour
+    la majorité des lots traités.
+    """
+    global _gemini_credentials_path
+    if _gemini_credentials_path:
+        return _gemini_credentials_path
+
     try:
         vault_url = "https://kv-tb-ia-agents-secrets.vault.azure.net/"
         credential = DefaultAzureCredential()
         secret_client = SecretClient(vault_url=vault_url, credential=credential)
-        
+
         os.environ["GEMINI_PROJECT_ID"] = secret_client.get_secret("GEMINI-PROJECT-ID").value
         os.environ["GEMINI_LOCATION"] = secret_client.get_secret("GEMINI-LOCATION").value
-        
+
         gcp_json_content = secret_client.get_secret("GCP-CREDENTIALS-JSON").value
         temp_gcp_path = os.path.join(os.getcwd(), "gcp_credentials_temp.json")
         with open(temp_gcp_path, "w", encoding="utf-8") as f:
             f.write(gcp_json_content)
         os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = temp_gcp_path
-        logging.info("[SUCCÈS] Authentification Azure Key Vault OK.")
+        logging.info("[SUCCÈS] Authentification Azure Key Vault OK (repli Gemini activé).")
+        _gemini_credentials_path = temp_gcp_path
         return temp_gcp_path
     except Exception as e:
-        logging.error(f"[ERREUR] Échec de récupération des secrets Azure : {e}")
+        logging.error(f"[ERREUR] Échec de récupération des secrets Azure (repli Gemini indisponible) : {e}")
         return None
 
 def process_new_files():
@@ -100,8 +129,23 @@ def process_new_files():
             # 1. Extraction du texte
             text = extract_text_from_pdf(input_pdf_path)
 
-            # 2. IA Processing (Gemini)
-            structured_data = parse_apave_text_to_corim_json(text)
+            # 2. Structuration : extraction déterministe en priorité (rapide, gratuite,
+            # testable), Gemini uniquement en repli si le format n'est pas reconnu
+            # (voir apave_parser.py pour le détail de la décision du 22/07).
+            try:
+                structured_data = parse_apave_report(text)
+                methode_extraction = "DETERMINISTE"
+                logging.info("[INFO] Extraction déterministe utilisée (pas d'appel LLM).")
+            except RapportFormatInconnu as format_error:
+                logging.warning(
+                    f"[ATTENTION] {format_error} Repli sur l'extraction Gemini pour ce fichier."
+                )
+                if _get_gemini_credentials():
+                    structured_data = parse_apave_text_to_corim_json(text)
+                    methode_extraction = "LLM_GEMINI"
+                else:
+                    logging.error(f"[ECHEC] Ni parseur déterministe ni Gemini disponibles pour {filename}.")
+                    continue
 
             # 2 bis. Alignement des numéros Corim (NUMERO / INTERV_ORIG), à partir
             # de l'export réel : le LLM ne les fournit jamais (voir ai_processor.py).
@@ -117,7 +161,19 @@ def process_new_files():
             
             generate_corim_excel(structured_data, excel_path)
             logging.info(f"[SUCCÈS] Fichier d'import généré : {excel_path}")
-            
+
+            # 3 bis. Traçabilité DWH (best-effort) : n'interrompt jamais le pipeline
+            # Excel si le schéma apave_corim n'existe pas encore ou si le VPN est
+            # coupé. Voir deploy/sql/001_create_schema_apave_corim.sql pour créer
+            # le schéma avant la première utilisation.
+            if _DWH_DISPONIBLE:
+                try:
+                    numero_rapport = structured_data["interventions"][0]["COMMENTAIRE_INTERNE"] if structured_data.get("interventions") else filename
+                    engine = get_engine()
+                    enregistrer_rapport(engine, numero_rapport, filename, methode_extraction, structured_data.get("interventions", []))
+                except Exception as dwh_error:
+                    logging.warning(f"[ATTENTION] Écriture DWH ignorée pour {filename} (non bloquant) : {dwh_error}")
+
             # 4. Archivage du PDF
             current_year = str(datetime.now().year)
             archive_year_dir = os.path.join(DIR_ARCHIVE, current_year)
@@ -133,19 +189,15 @@ def process_new_files():
 
 def main():
     setup_directories()
-    temp_gcp_path = setup_azure_credentials()
-    
-    if not temp_gcp_path:
-        logging.error("[STOP] Impossible de démarrer sans credentials GCP.")
-        return
 
     try:
         logging.info("[START] Démarrage du traitement par lot (Dossier Magique)...")
         process_new_files()
     finally:
-        # Nettoyage sécurisé du token GCP éphémère
-        if os.path.exists(temp_gcp_path):
-            os.remove(temp_gcp_path)
+        # Nettoyage sécurisé du token GCP éphémère, seulement s'il a été créé
+        # (repli Gemini effectivement déclenché sur ce run).
+        if _gemini_credentials_path and os.path.exists(_gemini_credentials_path):
+            os.remove(_gemini_credentials_path)
             logging.info("[SEC] Fichier GCP éphémère nettoyé.")
 
 if __name__ == "__main__":
