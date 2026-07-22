@@ -25,6 +25,7 @@ import pandas as pd
 from src.pdf_extractor import extract_text_from_pdf
 from src.ai_processor import parse_apave_text_to_corim_json
 from src.excel_generator import generate_corim_excel
+from src.corim_mapping import load_corim_export, enrich_interventions_with_corim_numbers
 
 # --- Configuration Log & Securité ---
 # Stratégie : Centralisation des secrets via Azure Key Vault pour empêcher toute compromission 
@@ -76,7 +77,20 @@ if uploaded_file is not None:
             
         with st.spinner("Analyse par l'IA (Gemini)... Cela peut prendre une minute."):
             structured_data = parse_apave_text_to_corim_json(text)
-            
+
+        # Alignement des numéros Corim (NUMERO / INTERV_ORIG) à partir de l'export
+        # réel fourni par Maxence. Le LLM ne les fournit jamais volontairement
+        # (voir Junior Tip dans src/ai_processor.py).
+        corim_export_path = os.path.join(os.getcwd(), "IA Apave Corim", "Export ITV tests pour Anthony.xls")
+        if os.path.exists(corim_export_path) and structured_data.get("interventions"):
+            with st.spinner("Alignement des numéros Corim..."):
+                corim_index = load_corim_export(corim_export_path)
+                structured_data["interventions"] = enrich_interventions_with_corim_numbers(
+                    structured_data["interventions"], corim_index
+                )
+        else:
+            st.warning("Export Corim introuvable : NUMERO et INTERV_ORIG resteront vides, à compléter manuellement.")
+
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         excel_filename = f"Import_Corim_{timestamp}.xlsx"
         excel_path = os.path.join(os.getcwd(), excel_filename)
