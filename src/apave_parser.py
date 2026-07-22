@@ -197,40 +197,58 @@ def parse_apave_report(texte: str) -> dict:
         appe_habit = _extraire_code_client(bloc)
         designation = _extraire_designation(bloc)
         cas = _classifier_bloc(bloc)
+        statut_a_confirmer = False
 
         if cas == "DEFAUT":
             observation = _extraire_observations(bloc) or _extraire_par_ailleurs(bloc)
-            demande = observation or f"Anomalie relevée sur {designation}."
+            compte_rendu = observation or f"Anomalie relevée sur {designation}."
             libe_inter = f"Défaut relevé {appe_habit}"
-            statut, type_maint = "A", "CO"
+            statut, type_maint, codest_maint = "A", "CO", "CORR SUITE CTRL"
         elif cas == "CLOTURE":
-            demande = "Clôture de l'intervention suite au rapport de vérification périodique Apave, aucune anomalie détectée."
+            compte_rendu = "Clôture de l'intervention suite au rapport de vérification périodique Apave, aucune anomalie détectée."
             libe_inter = f"Clôture VGP Apave {appe_habit}"
-            statut, type_maint = "H", "PR"
+            statut, type_maint, codest_maint = "H", "PR", "REGLEMENTAIRE"
         elif cas == "NON_VERIFIE":
-            demande = "Équipement non vérifié : en panne ou hors service lors de la vérification Apave. Intervention complémentaire à prévoir."
+            compte_rendu = "Équipement non vérifié : en panne ou hors service lors de la vérification Apave. Intervention complémentaire à prévoir."
             libe_inter = f"Équipement non vérifié {appe_habit}"
-            statut, type_maint = "A", "CO"
+            statut, type_maint, codest_maint = "A", "CO", "CORR SUITE CTRL"
         else:  # PARTIEL
             detail = _extraire_elements_non_verifies(bloc)
-            demande = (
+            compte_rendu = (
                 f"Vérification partielle ({detail})." if detail else "Vérification partielle."
             ) + " Cas particulier, nature technique à confirmer avec Richard avant import."
             libe_inter = f"Vérification partielle {appe_habit}"
-            statut, type_maint = "A", "CO"
+            statut, type_maint, codest_maint = "A", "CO", ""
+
+        # Cas signalé par Maxence lui-même dans son modèle annoté (610 - Modèle
+        # d'import.xlsx, ligne 6, cellule STATUT en rouge "E ou T ou H ? Voir
+        # Richard") : quand un défaut est relevé sur un équipement qui a déjà une
+        # ITV mère, le statut à donner à CETTE ITV mère (En cours/Terminée/
+        # Clôturée) n'est pas tranché. On ne le devine pas : on le signale.
+        if cas == "DEFAUT":
+            statut_a_confirmer = True
+
+        commentaire_interne = numero_rapport
+        if statut_a_confirmer:
+            # Visible directement dans l'Excel final (colonne conservée par
+            # excel_generator), pas seulement dans un champ interne qui serait
+            # perdu au tri des colonnes du template Corim.
+            commentaire_interne = f"{numero_rapport} [STATUT ITV MERE A CONFIRMER AVEC RICHARD]"
 
         interventions.append({
             "LIBE_INTER": libe_inter,
-            "DEMANDE": demande,
+            "DEMANDE": "",
+            "COMPTE_RENDU": compte_rendu,
             "APPE_HABIT": appe_habit,
             "PARC": appe_habit,
             "STATUT": statut,
             "TYPE_MAINT": type_maint,
             "DEMANDEUR": "utilisateur batch",
-            "COMMENTAIRE_INTERNE": numero_rapport,
+            "COMMENTAIRE_INTERNE": commentaire_interne,
             "CODE_NATT": "",
-            "CODEST_MAINT": "",
+            "CODEST_MAINT": codest_maint,
             "CAS_PDF": cas,
+            "STATUT_A_CONFIRMER": statut_a_confirmer,
             "INTERVENTION_MERE": "",
             "NUMERO": "",
             "INTERV_ORIG": "",

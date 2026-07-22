@@ -37,7 +37,17 @@ class Intervention(BaseModel):
     ces trois champs à vide ici, et CAS_PDF sert de aiguillage pour le mapping.
     """
     LIBE_INTER: str = Field(description="Titre court de l'intervention, ex: 'Correction équipement X suite rapport Apave'")
-    DEMANDE: str = Field(description="Description détaillée de la non-conformité relevée, ou motif de non-vérification")
+    DEMANDE: str = Field(
+        description="Laisser VIDE. D'après le modèle d'import annoté par Maxence (610 - Modèle d'import "
+                     "interventions Corim.xlsx), cette colonne n'est pas utilisée en pratique : le détail "
+                     "va dans COMPTE_RENDU, pas ici.",
+        default="",
+    )
+    COMPTE_RENDU: str = Field(
+        description="Description détaillée de la non-conformité relevée, ou motif de non-vérification. "
+                     "C'est ICI que va le détail (pas DEMANDE), conformément à l'usage réel de Maxence.",
+        default="",
+    )
     APPE_HABIT: str = Field(description="Nom ou référence de l'équipement, toujours préfixé par MACH0 (ex: 'MACH0347')", default="")
     PARC: str = Field(description="Référence Parc si disponible (souvent la même valeur que APPE_HABIT)", default="")
     STATUT: str = Field(description="'A' pour une création (cas défaut ou non vérifié), 'H' pour une clôture (cas sans observation, logo vert)", default="A")
@@ -50,8 +60,10 @@ class Intervention(BaseModel):
         default="",
     )
     CODEST_MAINT: str = Field(
-        description="Sous-type de maintenance Corim. Champ propre à chaque client (table Administration/Activité/Sous-types de maintenance). "
-                     "Ne JAMAIS inventer un code : laisser vide, il sera complété manuellement ou via mapping.",
+        description="Sous-type de maintenance Corim. D'après le modèle annoté par Maxence : 'REGLEMENTAIRE' "
+                     "pour une clôture (cas CLOTURE/NON_VERIFIE), 'CORR SUITE CTRL' pour une nouvelle "
+                     "sous-intervention corrective (cas DEFAUT). Laisser vide uniquement pour le cas PARTIEL "
+                     "(cas particulier, nature technique non confirmée).",
         default="",
     )
     CAS_PDF: str = Field(
@@ -101,24 +113,27 @@ def parse_apave_text_to_corim_json(text: str) -> dict:
 
         Règles d'extraction (TRÈS IMPORTANT) :
         1. APPE_HABIT : Doit TOUJOURS commencer par "MACH0". Exemples : si l'équipement est "347", tu extrais "MACH0347".
-        2. Gestion des statuts et interventions (classification CAS_PDF) :
+        2. DEMANDE reste TOUJOURS vide (colonne inutilisée dans le vrai process Corim, confirmé sur le modèle
+           annoté par Maxence). Le détail va dans COMPTE_RENDU, jamais dans DEMANDE.
+        3. Gestion des statuts et interventions (classification CAS_PDF) :
            - Cas "DEFAUT" (logo croix / avec observation) : il y a une non-conformité.
-             * STATUT="A" (Créé), TYPE_MAINT="CO".
-             * LIBE_INTER : un résumé court de la remarque Apave. DEMANDE : la remarque complète (le défaut).
+             * STATUT="A" (Créé), TYPE_MAINT="CO", CODEST_MAINT="CORR SUITE CTRL".
+             * LIBE_INTER : un résumé court de la remarque Apave. COMPTE_RENDU : la remarque complète (le défaut).
              * DEMANDEUR : "utilisateur batch".
            - Cas "CLOTURE" (logo vert / sans observation) : l'équipement est conforme, rien à faire dessus.
-             * STATUT="H" (Clôturé), TYPE_MAINT="PR".
-             * LIBE_INTER : "Clôture VGP Apave [APPE_HABIT]". DEMANDE : résumé de la conformité constatée.
+             * STATUT="H" (Clôturé), TYPE_MAINT="PR", CODEST_MAINT="REGLEMENTAIRE".
+             * LIBE_INTER : "Clôture VGP Apave [APPE_HABIT]". COMPTE_RENDU : résumé de la conformité constatée.
            - Cas "NON_VERIFIE" (logo orange / panne, hors service, non vérifié) :
-             * STATUT="A" (Créé), TYPE_MAINT="CO".
-             * DEMANDE : le motif de non-vérification tel que rédigé par Apave.
+             * STATUT="A" (Créé), TYPE_MAINT="CO", CODEST_MAINT="CORR SUITE CTRL".
+             * COMPTE_RENDU : le motif de non-vérification tel que rédigé par Apave.
            - Cas "PARTIEL" (vérification partielle sur un équipement à nature technique non standard, cas rare) :
-             * STATUT="A", TYPE_MAINT="CO". Cette ligne sera de toute façon isolée pour traitement manuel, ne cherche pas à la deviner finement.
-        3. IMPORTANT : NE JAMAIS renseigner INTERVENTION_MERE, NUMERO, INTERV_ORIG, CODE_NATT ou CODEST_MAINT.
+             * STATUT="A", TYPE_MAINT="CO", CODEST_MAINT="" (vide, cas particulier à trancher avec Richard).
+             * Cette ligne sera de toute façon isolée pour traitement manuel, ne cherche pas à la deviner finement.
+        4. IMPORTANT : NE JAMAIS renseigner INTERVENTION_MERE, NUMERO, INTERV_ORIG ou CODE_NATT.
            Ce sont des identifiants et codes internes à la base Corim, invisibles depuis le PDF Apave.
            Les inventer produirait un import qui échoue silencieusement chez Corim. Laisse-les à leur valeur par défaut (vide) :
            ils seront complétés après coup à partir d'un export Corim réel (voir src/corim_mapping.py).
-        4. COMMENTAIRE_INTERNE : Le numéro du rapport Apave (ex: A59735423-009-1) si tu le trouves au début du document.
+        5. COMMENTAIRE_INTERNE : Le numéro du rapport Apave (ex: A59735423-009-1) si tu le trouves au début du document.
         """
         
         response = client.models.generate_content(

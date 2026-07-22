@@ -41,6 +41,7 @@ CREATE TABLE IF NOT EXISTS apave_corim.interventions_extraites (
     cas_pdf             TEXT NOT NULL CHECK (cas_pdf IN ('DEFAUT', 'CLOTURE', 'NON_VERIFIE', 'PARTIEL')),
     libe_inter          TEXT NOT NULL,
     demande             TEXT,
+    compte_rendu        TEXT,
     statut              TEXT NOT NULL,
     type_maint          TEXT NOT NULL,
     intervention_mere   TEXT,

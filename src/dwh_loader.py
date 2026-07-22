@@ -172,11 +172,11 @@ def enregistrer_rapport(
             conn.execute(
                 text("""
                     INSERT INTO apave_corim.interventions_extraites
-                        (rapport_id, appe_habit, cas_pdf, libe_inter, demande, statut, type_maint,
+                        (rapport_id, appe_habit, cas_pdf, libe_inter, demande, compte_rendu, statut, type_maint,
                          intervention_mere, numero, interv_orig, code_natt, codest_maint,
                          a_traiter_manuellement)
                     VALUES
-                        (:rapport_id, :appe_habit, :cas_pdf, :libe_inter, :demande, :statut, :type_maint,
+                        (:rapport_id, :appe_habit, :cas_pdf, :libe_inter, :demande, :compte_rendu, :statut, :type_maint,
                          :intervention_mere, :numero, :interv_orig, :code_natt, :codest_maint,
                          :a_traiter_manuellement)
                 """),
@@ -186,6 +186,7 @@ def enregistrer_rapport(
                     "cas_pdf": itv.get("CAS_PDF", "DEFAUT"),
                     "libe_inter": itv.get("LIBE_INTER", ""),
                     "demande": itv.get("DEMANDE", ""),
+                    "compte_rendu": itv.get("COMPTE_RENDU", ""),
                     "statut": itv.get("STATUT", ""),
                     "type_maint": itv.get("TYPE_MAINT", ""),
                     "intervention_mere": itv.get("INTERVENTION_MERE") or None,
