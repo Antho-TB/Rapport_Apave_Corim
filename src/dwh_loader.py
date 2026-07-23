@@ -190,11 +190,13 @@ def enregistrer_rapport(
                 text("""
                     INSERT INTO apave_corim.interventions_extraites
                         (rapport_id, appe_habit, cas_pdf, libe_inter, demande, compte_rendu, statut, type_maint,
-                         datedeb_reel, datefin_reel, intervention_mere, numero, interv_orig, code_natt, codest_maint,
+                         datedeb_prevu, datefin_prevu, datedeb_reel, datefin_reel,
+                         intervention_mere, numero, interv_orig, code_natt, codest_maint,
                          a_traiter_manuellement)
                     VALUES
                         (:rapport_id, :appe_habit, :cas_pdf, :libe_inter, :demande, :compte_rendu, :statut, :type_maint,
-                         :datedeb_reel, :datefin_reel, :intervention_mere, :numero, :interv_orig, :code_natt, :codest_maint,
+                         :datedeb_prevu, :datefin_prevu, :datedeb_reel, :datefin_reel,
+                         :intervention_mere, :numero, :interv_orig, :code_natt, :codest_maint,
                          :a_traiter_manuellement)
                 """),
                 {
@@ -209,6 +211,8 @@ def enregistrer_rapport(
                     # Format source "AAAAMMJJ HH:mm" (convention Corim) -> psycopg2 caste
                     # en TIMESTAMPTZ via to_timestamp cote SQL n'est pas fait ici : on
                     # passe la valeur brute, None si absente, pour rester simple ETL.
+                    "datedeb_prevu": _vers_timestamp(itv.get("DATEDEB_PREVU")),
+                    "datefin_prevu": _vers_timestamp(itv.get("DATEFIN_PREVU")),
                     "datedeb_reel": _vers_timestamp(itv.get("DATEDEB_REEL")),
                     "datefin_reel": _vers_timestamp(itv.get("DATEFIN_REEL")),
                     "intervention_mere": itv.get("INTERVENTION_MERE") or None,

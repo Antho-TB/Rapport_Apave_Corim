@@ -49,11 +49,27 @@ COLONNES_ALIAS: dict[str, list[str]] = {
     "code_parc": ["Code parc", "APPE_HABIT"],
     "numero_itv": ["Numéro", "NUMERO"],
     "code_natt": ["Code nature d'intervention", "CODE_NATT"],
-    "codest_maint": ["Code type d'intervention", "CODEST_MAINT"],
+    # Correction du 22/07 (réponse Maxence Q5) : la colonne candidate était
+    # "Code type d'intervention" (valeur observée 'PREV', qui ne correspond à
+    # aucun code CODEST_MAINT connu), alors que "Sous-type de maintenance" porte
+    # bien des valeurs comme 'REGLEMENTAIRE' qui matchent notre convention.
+    "codest_maint": ["Sous-type de maintenance", "CODEST_MAINT"],
     # Découvert le 22/07 en relisant les annotations du modèle Maxence : le
     # placeholder "[A RECUPERER SUR EXPORT CORIM]" sur LIBE_INTER correspond à
     # ce libellé (ex: "Presse à balles HSM"), pas à un texte à générer nous-même.
     "libelle_parc": ["Libellé parc", "LIBE_PARC"],
+    # Réponse Maxence Q1 du 22/07 ("Ils sont dans l'export CORIM") : TYPE_MAINT
+    # vient de cette colonne. Attention piège vérifié le 22/07 : "Type de
+    # maintenance" porte le CODE brut (ex: 'PREV'), et c'est "Libellé type de
+    # maintenance" qui porte le mot en toutes lettres ('Préventif') - l'inverse
+    # de ce qu'on pourrait supposer au nom des colonnes. On reprend donc "Type
+    # de maintenance" tel quel (comme codest_maint/libelle_parc), sans essayer
+    # de traduire un mot vers un code PR/CO/AM/FA/AU du template générique : ce
+    # code ('PREV') ne correspond à aucune valeur de cette doc générique, mais
+    # c'est le code réellement utilisé par CETTE instance Corim (même logique
+    # que REGLEMENTAIRE/CORR SUITE CTRL pour CODEST_MAINT, qui ne sont pas non
+    # plus dans la doc générique du template).
+    "type_maintenance": ["Type de maintenance", "TYPE_MAINT"],
 }
 
 
@@ -115,6 +131,7 @@ def load_corim_export(export_path: str) -> dict[str, dict]:
     col_natt = _resoudre_colonne(df, COLONNES_ALIAS["code_natt"])
     col_codest = _resoudre_colonne(df, COLONNES_ALIAS["codest_maint"])
     col_libelle = _resoudre_colonne(df, COLONNES_ALIAS["libelle_parc"])
+    col_type_maint = _resoudre_colonne(df, COLONNES_ALIAS["type_maintenance"])
 
     index: dict[str, dict] = {}
 
@@ -127,6 +144,7 @@ def load_corim_export(export_path: str) -> dict[str, dict]:
         code_natt = str(row.get(col_natt, "") or "").strip() if col_natt else ""
         codest_maint = str(row.get(col_codest, "") or "").strip() if col_codest else ""
         libelle_parc = str(row.get(col_libelle, "") or "").strip() if col_libelle else ""
+        type_maintenance = str(row.get(col_type_maint, "") or "").strip() if col_type_maint else ""
 
         index[code_parc] = {
             "numero_itv": "" if numero_itv.lower() == "nan" else numero_itv,
@@ -137,6 +155,7 @@ def load_corim_export(export_path: str) -> dict[str, dict]:
             "code_natt": "" if code_natt.lower() == "nan" else code_natt,
             "codest_maint": "" if codest_maint.lower() == "nan" else codest_maint,
             "libelle_parc": "" if libelle_parc.lower() == "nan" else libelle_parc,
+            "type_maintenance": "" if type_maintenance.lower() == "nan" else type_maintenance,
         }
 
     logging.info(f"[SUCCES] {len(index)} équipement(s) indexé(s) depuis l'export Corim.")
@@ -206,26 +225,38 @@ def enrich_interventions_with_corim_numbers(
         if match.get("code_natt"):
             itv["CODE_NATT"] = match["code_natt"]
 
-        # CODEST_MAINT : volontairement PAS auto-rempli, même si une colonne candidate
-        # est détectée. Richard a signalé mi-juin une confusion connue sur cette colonne
-        # (les libellés "Sous-type de maintenance" / "Code type d'intervention" de
-        # l'export natif Corim ne correspondent pas de façon fiable au code attendu par
-        # le template d'import). Écrire une valeur fausse ici casserait l'import
-        # silencieusement ; on préfère laisser vide et signaler pour vérif manuelle.
+        # CODEST_MAINT : toujours PAS auto-rempli, même après correction de la
+        # colonne source (22/07, Sous-type de maintenance). Réponse Maxence Q5 :
+        # "peut y en avoir d'autres, liste à faire par Richard" -> pas encore un
+        # feu vert pour appliquer automatiquement, on continue de log un candidat.
         if match.get("codest_maint"):
             logging.info(
                 f"[INFO] {appe_habit} : code candidat pour CODEST_MAINT détecté ('{match['codest_maint']}') "
                 "mais non appliqué automatiquement, à confirmer avec Richard avant réutilisation."
             )
 
+        # TYPE_MAINT : réponse Maxence Q1 du 22/07 ("Ils sont dans l'export CORIM")
+        # -> auto-appliqué, contrairement à CODEST_MAINT (pas la même réserve de
+        # sa part). Valeur reprise telle quelle (voir commentaire COLONNES_ALIAS
+        # sur le piège colonne code/libellé inversé).
+        if match.get("type_maintenance"):
+            itv["TYPE_MAINT"] = match["type_maintenance"]
+
         # LIBE_INTER : le modèle annoté par Maxence (610 - Modèle d'import.xlsx,
         # C5/C6) attend "[libellé équipement issu de l'export Corim] [mois/année
         # intervention Apave]", pas un texte générique inventé par le parseur/le
         # LLM. Si l'export fournit ce libellé, on l'utilise ; sinon on garde le
-        # LIBE_INTER généré en amont (fallback, jamais pire que l'existant).
-        if match.get("libelle_parc"):
+        # LIBE_INTER généré en amont (fallback, jamais pire que l'existant). Cas
+        # PARTIEL exclu : Maxence veut le libellé fixe "A vérifier manuellement"
+        # (Q9 du 22/07), pas le libellé équipement.
+        if match.get("libelle_parc") and cas != "PARTIEL":
             mois_annee = itv.get("MOIS_ANNEE", "")
             itv["LIBE_INTER"] = f"{match['libelle_parc']} {mois_annee}".strip()
+
+        # Troncature 60 caractères (réponse Maxence Q13) : refaite ici car cette
+        # réécriture de LIBE_INTER peut dépasser la limite même si le parseur
+        # d'origine tronquait déjà son propre texte de repli.
+        itv["LIBE_INTER"] = itv.get("LIBE_INTER", "")[:60]
 
         enriched.append(itv)
 

@@ -63,6 +63,23 @@ def _extraire_numero_rapport(texte: str) -> str:
     return match.group(1) if match else ""
 
 
+def _extraire_date_rapport(texte: str) -> tuple[str, str, str] | None:
+    """
+    Récupère la date de couverture du rapport (ex: "Date : 30/01/2026" en page
+    de garde), à ne pas confondre avec "Date de la vérification JJ/MM/AAAA" qui
+    est propre à chaque équipement.
+
+    Junior Tip (réponse de Maxence au questionnaire du 22/07, Q7) :
+    DATEDEB_PREVU/DATEFIN_PREVU attendent cette date de couverture, pas la date
+    de vérification par équipement (qui va dans DATEDEB_REEL/DATEFIN_REEL). La
+    regex "Date\\s*:" (avec le double-point) ne matche jamais "Date de la
+    vérification" (qui n'a pas de double-point), donc pas d'ambiguïté entre les
+    deux occurrences dans le texte du PDF.
+    """
+    match = re.search(r"Date\s*:\s*(\d{2})/(\d{2})/(\d{4})", texte)
+    return match.groups() if match else None
+
+
 def _extraire_code_client(bloc: str) -> str:
     """
     Récupère le code équipement (repère "Client") et le formate en APPE_HABIT.
@@ -204,6 +221,12 @@ def parse_apave_report(texte: str) -> dict:
     logging.info("[INFO] Extraction déterministe du rapport Apave (sans LLM).")
 
     numero_rapport = _extraire_numero_rapport(texte)
+
+    # Date de couverture du rapport (DATEDEB_PREVU/DATEFIN_PREVU, réponse Maxence
+    # Q7 du 22/07) : une seule fois pour tout le document, pas par équipement.
+    date_rapport = _extraire_date_rapport(texte)
+    date_prevu_corim = _formater_date_corim(*date_rapport) if date_rapport else ""
+
     morceaux = DECOUPE_BLOC.split(texte)
 
     if len(morceaux) < 3:
@@ -252,15 +275,17 @@ def parse_apave_report(texte: str) -> dict:
             compte_rendu = (
                 f"Vérification partielle ({detail})." if detail else "Vérification partielle."
             ) + " Cas particulier, nature technique à confirmer avec Richard avant import."
-            libe_inter = f"Vérification partielle {appe_habit}"
+            # LIBE_INTER (réponse Maxence Q9 du 22/07) : libellé fixe "A vérifier
+            # manuellement" pour ce cas, le détail va dans COMPTE_RENDU (déjà fait
+            # ci-dessus), pas de mois/année ajouté ensuite pour ce cas particulier.
+            libe_inter = "A vérifier manuellement"
             statut, codest_maint = "A", ""
 
-        # TYPE_MAINT (correction du 22/07, 2e relecture des annotations Maxence) :
-        # la colonne n'est PAS surlignée en jaune dans le modèle (donc pas parmi
-        # les colonnes réellement utilisées), et Maxence la laisse VIDE sur ses 3
-        # lignes d'exemple (5, 6, 7 - CLOTURE, cas ambigu, DEFAUT), malgré la
-        # mention "Obligatoire" dans la doc de colonne. On suit l'usage réel
-        # observé plutôt que la doc générique du template : vide partout.
+        # TYPE_MAINT : vide par défaut ici (le parseur ne lit pas l'export Corim).
+        # Réponse Maxence Q1 du 22/07 : "Ils sont dans l'export CORIM" -> la vraie
+        # valeur (PR/CO/AM/FA/AU) vient de la colonne "Type de maintenance" de
+        # l'export, appliquée par corim_mapping.py quand l'équipement y est trouvé.
+        # Ce champ reste vide seulement en fallback (équipement absent de l'export).
         type_maint = ""
 
         # Modèle annoté Maxence (610 - Modèle d'import.xlsx, C5/C6) : LIBE_INTER
@@ -268,15 +293,23 @@ def parse_apave_report(texte: str) -> dict:
         # Le préfixe (désignation équipement) est ensuite éventuellement remplacé
         # par corim_mapping.py avec le "Libellé parc" de l'export Corim, plus
         # fiable que ce texte générique (voir MOIS_ANNEE ci-dessous, conservé
-        # pour permettre cette réécriture après coup).
-        if mois_annee:
+        # pour permettre cette réécriture après coup). Cas PARTIEL exclu (libellé
+        # fixe ci-dessus).
+        if mois_annee and cas != "PARTIEL":
             libe_inter = f"{libe_inter} {mois_annee}"
+
+        # Réponse Maxence Q13 du 22/07 : LIBE_INTER limité à 60 caractères côté
+        # Corim (voir doc colonne du template, "60 c max") -> troncature simple,
+        # pas de gestion spéciale demandée.
+        libe_inter = libe_inter[:60]
 
         # Cas signalé par Maxence lui-même dans son modèle annoté (610 - Modèle
         # d'import.xlsx, ligne 6, cellule STATUT en rouge "E ou T ou H ? Voir
         # Richard") : quand un défaut est relevé sur un équipement qui a déjà une
         # ITV mère, le statut à donner à CETTE ITV mère (En cours/Terminée/
-        # Clôturée) n'est pas tranché. On ne le devine pas : on le signale.
+        # Clôturée) n'est pas tranché. Réponse Maxence Q8 du 22/07 : "pas défaut :
+        # En cours", mais "à valider avec Richard" -> on propose E par défaut tout
+        # en gardant le flag explicite (pas encore une décision définitive).
         if cas == "DEFAUT":
             statut_a_confirmer = True
 
@@ -285,7 +318,9 @@ def parse_apave_report(texte: str) -> dict:
             # Visible directement dans l'Excel final (colonne conservée par
             # excel_generator), pas seulement dans un champ interne qui serait
             # perdu au tri des colonnes du template Corim.
-            commentaire_interne = f"{numero_rapport} [STATUT ITV MERE A CONFIRMER AVEC RICHARD]"
+            commentaire_interne = (
+                f"{numero_rapport} [STATUT ITV MERE PROPOSE: E (EN COURS) - A CONFIRMER AVEC RICHARD]"
+            )
 
         interventions.append({
             "LIBE_INTER": libe_inter,
@@ -295,6 +330,8 @@ def parse_apave_report(texte: str) -> dict:
             "PARC": appe_habit,
             "STATUT": statut,
             "TYPE_MAINT": type_maint,
+            "DATEDEB_PREVU": date_prevu_corim,
+            "DATEFIN_PREVU": date_prevu_corim,
             "DATEDEB_REEL": date_corim,
             "DATEFIN_REEL": date_corim,
             "DEMANDEUR": "utilisateur batch",

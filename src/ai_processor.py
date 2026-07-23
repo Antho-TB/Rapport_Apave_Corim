@@ -71,6 +71,16 @@ class Intervention(BaseModel):
                      "équipement de l'export Corim.",
         default="",
     )
+    DATEDEB_PREVU: str = Field(
+        description="Date-heure de début prévu, format AAAAMMJJ HH:mm. C'est la date de COUVERTURE du rapport "
+                     "(ligne 'Date : JJ/MM/AAAA' en première page, PAS 'Date de la vérification' qui est par "
+                     "équipement), heure 00:00 par convention. Réponse confirmée par Maxence le 22/07.",
+        default="",
+    )
+    DATEFIN_PREVU: str = Field(
+        description="Même règle et même valeur que DATEDEB_PREVU (date de couverture du rapport).",
+        default="",
+    )
     DATEDEB_REEL: str = Field(
         description="Date-heure de début réel, format AAAAMMJJ HH:mm. Doit être la date de vérification Apave "
                      "trouvée dans le bloc équipement (ligne 'Date de la vérification JJ/MM/AAAA'), heure 00:00 "
@@ -149,15 +159,17 @@ def parse_apave_text_to_corim_json(text: str) -> dict:
            JJ/MM/AAAA" et convertis-la en "AAAAMMJJ 00:00" (même valeur pour les deux champs, heure 00:00 par
            convention car le rapport ne donne pas d'heure). Colonnes réellement utilisées par Corim (confirmé
            sur le modèle annoté par Maxence) : ne les laisse PAS vides si la date est présente dans le PDF.
-        4. MOIS_ANNEE = mois/année de cette même date de vérification, au format "MM/AAAA" (ex: "01/2026").
+        4. DATEDEB_PREVU et DATEFIN_PREVU : cherche la ligne "Date : JJ/MM/AAAA" en première page du rapport
+           (date de couverture, différente de "Date de la vérification" qui est par équipement) et convertis-la
+           en "AAAAMMJJ 00:00", même valeur pour les deux champs. Confirmé par Maxence le 22/07.
+        5. MOIS_ANNEE = mois/année de la date de vérification (DATEDEB_REEL), au format "MM/AAAA" (ex: "01/2026").
            LIBE_INTER se termine par cette même valeur (ex: "Clôture VGP Apave MACH0347 01/2026") : c'est un
            texte de repli, le préfixe sera ensuite remplacé par corim_mapping.py avec le vrai libellé
            équipement de l'export Corim si disponible, mais MOIS_ANNEE doit être rempli séparément pour que
-           cette réécriture reste possible.
-        5. TYPE_MAINT reste TOUJOURS vide. Colonne non surlignée comme "utilisée" dans le modèle annoté par
-           Maxence, et laissée vide sur ses 3 lignes d'exemple malgré la doc générique du template qui la dit
-           "obligatoire" : on suit l'usage réel, pas la doc générique.
-        6. Gestion des statuts et interventions (classification CAS_PDF) :
+           cette réécriture reste possible. Exception : cas "PARTIEL", voir règle 7.
+        6. TYPE_MAINT reste TOUJOURS vide de ton côté (tu n'as pas accès à l'export Corim qui porte la vraie
+           valeur) : ce champ est complété après coup par corim_mapping.py.
+        7. Gestion des statuts et interventions (classification CAS_PDF) :
            - Cas "DEFAUT" (logo croix / avec observation) : il y a une non-conformité.
              * STATUT="A" (Créé), CODEST_MAINT="CORR SUITE CTRL".
              * LIBE_INTER : un résumé court de la remarque Apave. COMPTE_RENDU : la remarque complète (le défaut).
@@ -170,12 +182,15 @@ def parse_apave_text_to_corim_json(text: str) -> dict:
              * COMPTE_RENDU : le motif de non-vérification tel que rédigé par Apave.
            - Cas "PARTIEL" (vérification partielle sur un équipement à nature technique non standard, cas rare) :
              * STATUT="A", CODEST_MAINT="" (vide, cas particulier à trancher avec Richard).
+             * LIBE_INTER = TOUJOURS exactement "A vérifier manuellement" (pas de mois/année ajouté, confirmé
+               par Maxence le 22/07). Le détail va dans COMPTE_RENDU, pas dans LIBE_INTER.
              * Cette ligne sera de toute façon isolée pour traitement manuel, ne cherche pas à la deviner finement.
-        7. IMPORTANT : NE JAMAIS renseigner INTERVENTION_MERE, NUMERO, INTERV_ORIG ou CODE_NATT.
+        8. LIBE_INTER : 60 caractères MAXIMUM (limite Corim). Tronque si besoin, ne cherche pas à reformuler.
+        9. IMPORTANT : NE JAMAIS renseigner INTERVENTION_MERE, NUMERO, INTERV_ORIG ou CODE_NATT.
            Ce sont des identifiants et codes internes à la base Corim, invisibles depuis le PDF Apave.
            Les inventer produirait un import qui échoue silencieusement chez Corim. Laisse-les à leur valeur par défaut (vide) :
            ils seront complétés après coup à partir d'un export Corim réel (voir src/corim_mapping.py).
-        8. COMMENTAIRE_INTERNE : Le numéro du rapport Apave (ex: A59735423-009-1) si tu le trouves au début du document.
+        10. COMMENTAIRE_INTERNE : Le numéro du rapport Apave (ex: A59735423-009-1) si tu le trouves au début du document.
         """
         
         response = client.models.generate_content(

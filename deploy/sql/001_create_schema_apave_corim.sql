@@ -44,6 +44,8 @@ CREATE TABLE IF NOT EXISTS apave_corim.interventions_extraites (
     compte_rendu        TEXT,
     statut              TEXT NOT NULL,
     type_maint          TEXT NOT NULL,
+    datedeb_prevu       TIMESTAMPTZ,
+    datefin_prevu       TIMESTAMPTZ,
     datedeb_reel        TIMESTAMPTZ,
     datefin_reel        TIMESTAMPTZ,
     intervention_mere   TEXT,
