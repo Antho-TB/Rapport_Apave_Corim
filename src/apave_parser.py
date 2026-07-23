@@ -113,15 +113,74 @@ def _extraire_designation(bloc: str) -> str:
 def _extraire_observations(bloc: str) -> str:
     """
     Récupère le texte des observations (défauts relevés), entre 'Observations'
-    et 'Liste des points vérifiés' (ou la fin du bloc si la coupure est absente).
+    et le premier repère de fin : 'Liste des points vérifiés', ou le pied de
+    page qui suit ('Version modèle rapport...', répété en bas de chaque page).
+
+    Piège corrigé le 22/07 (suite au split multi-défauts, voir Q11) : quand la
+    section Observations se termine en fin de page, le pied de page ('Date :
+    JJ/MM/AAAA - Version modèle rapport LearaBIP_x.x.x Page N / M') ET l'en-tête
+    de la page suivante ('RAPPORT - EQUIPEMENTS MECANIQUES N° DE RAPPORT : ...')
+    restaient collés au texte capturé, tant que 'Liste des points vérifiés'
+    n'apparaissait pas avant la fin du bloc. Ce bruit de mise en page se
+    faisait alors découper en faux "défauts" supplémentaires par
+    _decouper_defauts. "Version modèle rapport" sert de repère de coupe
+    supplémentaire, plus fiable qu'une simple recherche de fin de bloc.
     """
-    match = re.search(r"Observations\s*\n(.*?)(?=Liste des points vérifiés|\Z)", bloc, re.DOTALL)
+    match = re.search(
+        r"Observations\s*\n(.*?)(?=Liste des points vérifiés|Date\s*:\s*\d{2}/\d{2}/\d{4}\s*-\s*Version modèle rapport|\Z)",
+        bloc, re.DOTALL,
+    )
     if not match:
         return ""
     # Nettoyage : on recolle les lignes coupées par la mise en page PDF et on
     # retire les tirets de fin de paragraphe laissés par l'extraction.
     texte = " ".join(l.strip() for l in match.group(1).splitlines() if l.strip())
     return texte.rstrip("- ").strip()
+
+
+def _decouper_defauts(texte_observations: str) -> list[str]:
+    """
+    Découpe un texte d'observations en défauts individuels.
+
+    Junior Tip (réponse Maxence Q11 du 22/07, "une ITV = une ligne") : sur la
+    page de synthèse du rapport Apave, chaque équipement porte un badge numéroté
+    (1, 2...) qui correspond au nombre de blocs "catégorie + description"
+    présents dans sa page Observations (ex: MACH0337 badge "2" = "ÉLÉMENTS
+    CONSTITUTIFS" + "ÉLÉMENTS MÉCANIQUES").
+
+    Piège corrigé le 22/07 : un premier essai découpait sur TOUT " - ", mais un
+    même défaut peut contenir des tirets internes qui n'ont rien à voir avec une
+    séparation entre défauts (ex: MACH0355 "CHARPENTE Structure - Tablier -
+    Portillon : Remettre en état le panneau inferieur." = UN SEUL défaut dont le
+    libellé énumère 3 sous-éléments avec des tirets, PAS 3 défauts). Découper
+    plutôt sur ". - " (point suivi d'un tiret) est plus sûr : c'est la marque
+    d'une phrase déjà terminée avant un nouveau bloc catégorie/description.
+    Contrepartie assumée : un cas où deux défauts s'enchaînent SANS point avant
+    le tiret (observé une fois sur MACH0103, "...mission complémentaire -
+    Protecteurs : ...") reste fusionné en une seule ligne au lieu de deux. C'est
+    un sous-découpage (comportement identique à avant cette fonctionnalité), pas
+    un sur-découpage qui inventerait des lignes fausses : le compromis est
+    délibéré, on préfère rater un découpage que produire un défaut fantôme.
+    """
+    morceaux = [m.strip() for m in re.split(r"\.\s*-\s*", texte_observations)]
+    return [m if m.endswith(".") else f"{m}." for m in morceaux if m]
+
+
+def _extraire_defauts(bloc: str) -> list[str]:
+    """
+    Retourne un défaut par ligne d'ITV à créer (voir _decouper_defauts).
+
+    Se rabat sur "Par ailleurs" si la section Observations est vide (cas d'une
+    clôture reclassée en DEFAUT à cause d'une remarque complémentaire, ex:
+    MACH0370) : dans ce cas il n'y a qu'un seul défaut, pas de découpage à faire.
+    """
+    observations = _extraire_observations(bloc)
+    if observations:
+        defauts = _decouper_defauts(observations)
+        if defauts:
+            return defauts
+    par_ailleurs = _extraire_par_ailleurs(bloc)
+    return [par_ailleurs] if par_ailleurs else []
 
 
 def _extraire_elements_non_verifies(bloc: str) -> str:
@@ -257,24 +316,29 @@ def parse_apave_report(texte: str) -> dict:
             mois_annee = ""
             date_corim = ""
 
+        # Réponse Maxence Q11 du 22/07 ("une ITV = une ligne") : le cas DEFAUT
+        # peut produire PLUSIEURS comptes-rendus (un par défaut individuel
+        # relevé sur l'équipement, voir _extraire_defauts) -> une intervention
+        # par défaut, pas une seule ligne qui les concatène tous. Les autres cas
+        # (CLOTURE/NON_VERIFIE/PARTIEL) restent une seule ligne, il n'y a
+        # jamais plusieurs constats distincts pour ces cas-là.
         if cas == "DEFAUT":
-            observation = _extraire_observations(bloc) or _extraire_par_ailleurs(bloc)
-            compte_rendu = observation or f"Anomalie relevée sur {designation}."
+            comptes_rendus = _extraire_defauts(bloc) or [f"Anomalie relevée sur {designation}."]
             libe_inter = f"Défaut relevé {appe_habit}"
             statut, codest_maint = "A", "CORR SUITE CTRL"
         elif cas == "CLOTURE":
-            compte_rendu = "Clôture de l'intervention suite au rapport de vérification périodique Apave, aucune anomalie détectée."
+            comptes_rendus = ["Clôture de l'intervention suite au rapport de vérification périodique Apave, aucune anomalie détectée."]
             libe_inter = f"Clôture VGP Apave {appe_habit}"
             statut, codest_maint = "H", "REGLEMENTAIRE"
         elif cas == "NON_VERIFIE":
-            compte_rendu = "Équipement non vérifié : en panne ou hors service lors de la vérification Apave. Intervention complémentaire à prévoir."
+            comptes_rendus = ["Équipement non vérifié : en panne ou hors service lors de la vérification Apave. Intervention complémentaire à prévoir."]
             libe_inter = f"Équipement non vérifié {appe_habit}"
             statut, codest_maint = "A", "CORR SUITE CTRL"
         else:  # PARTIEL
             detail = _extraire_elements_non_verifies(bloc)
-            compte_rendu = (
+            comptes_rendus = [(
                 f"Vérification partielle ({detail})." if detail else "Vérification partielle."
-            ) + " Cas particulier, nature technique à confirmer avec Richard avant import."
+            ) + " Cas particulier, nature technique à confirmer avec Richard avant import."]
             # LIBE_INTER (réponse Maxence Q9 du 22/07) : libellé fixe "A vérifier
             # manuellement" pour ce cas, le détail va dans COMPTE_RENDU (déjà fait
             # ci-dessus), pas de mois/année ajouté ensuite pour ce cas particulier.
@@ -322,29 +386,35 @@ def parse_apave_report(texte: str) -> dict:
                 f"{numero_rapport} [STATUT ITV MERE PROPOSE: E (EN COURS) - A CONFIRMER AVEC RICHARD]"
             )
 
-        interventions.append({
-            "LIBE_INTER": libe_inter,
-            "DEMANDE": "",
-            "COMPTE_RENDU": compte_rendu,
-            "APPE_HABIT": appe_habit,
-            "PARC": appe_habit,
-            "STATUT": statut,
-            "TYPE_MAINT": type_maint,
-            "DATEDEB_PREVU": date_prevu_corim,
-            "DATEFIN_PREVU": date_prevu_corim,
-            "DATEDEB_REEL": date_corim,
-            "DATEFIN_REEL": date_corim,
-            "DEMANDEUR": "utilisateur batch",
-            "COMMENTAIRE_INTERNE": commentaire_interne,
-            "CODE_NATT": "",
-            "CODEST_MAINT": codest_maint,
-            "CAS_PDF": cas,
-            "MOIS_ANNEE": mois_annee,
-            "STATUT_A_CONFIRMER": statut_a_confirmer,
-            "INTERVENTION_MERE": "",
-            "NUMERO": "",
-            "INTERV_ORIG": "",
-        })
+        # Une intervention par compte-rendu (voir comptes_rendus ci-dessus) :
+        # pour CLOTURE/NON_VERIFIE/PARTIEL, c'est toujours une seule ligne ;
+        # pour DEFAUT, autant de lignes que de défauts individuels détectés,
+        # toutes identiques hors COMPTE_RENDU (même équipement, même dates,
+        # même statut : Corim les distinguera par son propre NUMERO généré).
+        for compte_rendu in comptes_rendus:
+            interventions.append({
+                "LIBE_INTER": libe_inter,
+                "DEMANDE": "",
+                "COMPTE_RENDU": compte_rendu,
+                "APPE_HABIT": appe_habit,
+                "PARC": appe_habit,
+                "STATUT": statut,
+                "TYPE_MAINT": type_maint,
+                "DATEDEB_PREVU": date_prevu_corim,
+                "DATEFIN_PREVU": date_prevu_corim,
+                "DATEDEB_REEL": date_corim,
+                "DATEFIN_REEL": date_corim,
+                "DEMANDEUR": "utilisateur batch",
+                "COMMENTAIRE_INTERNE": commentaire_interne,
+                "CODE_NATT": "",
+                "CODEST_MAINT": codest_maint,
+                "CAS_PDF": cas,
+                "MOIS_ANNEE": mois_annee,
+                "STATUT_A_CONFIRMER": statut_a_confirmer,
+                "INTERVENTION_MERE": "",
+                "NUMERO": "",
+                "INTERV_ORIG": "",
+            })
 
     logging.info(f"[SUCCES] {len(interventions)} intervention(s) extraite(s) sans appel LLM.")
 
