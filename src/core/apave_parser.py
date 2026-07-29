@@ -101,6 +101,12 @@ def _extraire_code_client(bloc: str) -> str:
         return ""
     nombres = re.findall(r"\d+", match.group(1))
     if not nombres:
+        # Cas découvert le 29/07 sur le rapport LEVAGE (RA59215196-010-1) : certains
+        # blocs n'ont pas de repère numérique du tout ("Client ETIQUETAGE Bâtiment
+        # Service", "Client Bâtiment Service Mezzanine"). On ne devine PAS un code :
+        # APPE_HABIT reste vide et l'appelant marque la ligne pour reprise manuelle
+        # (voir parse_apave_report). Inventer un code ici ferait échouer l'import
+        # Corim silencieusement, ou pire, rattacherait l'ITV au mauvais équipement.
         return ""
     # Bug corrigé le 29/07 (revue Antho, comparaison avec l'export Corim réel) :
     # un ancien essai faisait "MACH0" + nombre brut, ce qui ne donne 4 chiffres
@@ -111,6 +117,13 @@ def _extraire_code_client(bloc: str) -> str:
     # sur les 5 équipements de l'export test : MACH0535, MACH0252, MACH0376,
     # MACH0334, MACH0337, tous à 4 chiffres). On zero-pad explicitement sur 4,
     # quelle que soit la longueur du repère brut.
+    #
+    # Cas 5 chiffres (découvert le 29/07 sur le rapport LEVAGE, repère "80005") :
+    # le zero-padding ne s'applique pas (le nombre dépasse déjà 4 chiffres), on
+    # renvoie le code tel quel. Il ne respecte alors pas la convention MACH+4,
+    # d'où le marquage pour reprise manuelle côté parse_apave_report : soit ce
+    # repère appartient à une autre famille de codes Corim, soit c'est une
+    # coquille du rapport Apave. À confirmer avec Richard, ne pas tronquer.
     return f"MACH{int(nombres[-1]):04d}"
 
 
@@ -388,13 +401,37 @@ def parse_apave_report(texte: str) -> dict:
         if cas == "DEFAUT":
             statut_a_confirmer = True
 
+        # Contrôle de conformité du code équipement (ajouté le 29/07, découverte
+        # sur le rapport LEVAGE RA59215196-010-1) : APPE_HABIT est obligatoire
+        # côté Corim et doit suivre la convention MACH + 4 chiffres. Trois écarts
+        # réels observés sur ce rapport : repère à 5 chiffres ("80005"), et deux
+        # blocs sans aucun repère numérique ("ETIQUETAGE", "Mezzanine"). Plutôt
+        # que de laisser passer une ligne silencieusement invalide (import Corim
+        # en échec, ou pire, rattachée au mauvais équipement), on la marque
+        # explicitement dans le commentaire, visible directement dans l'Excel.
+        code_non_conforme = not re.fullmatch(r"MACH\d{4}", appe_habit)
+
         commentaire_interne = numero_rapport
+        if code_non_conforme:
+            detail = f"'{appe_habit}'" if appe_habit else "ABSENT DU RAPPORT"
+            commentaire_interne = (
+                f"{commentaire_interne} [CODE EQUIPEMENT NON CONFORME: {detail}, "
+                "ATTENDU MACH+4 CHIFFRES - A CORRIGER MANUELLEMENT AVANT IMPORT]"
+            )
         if statut_a_confirmer:
             # Visible directement dans l'Excel final (colonne conservée par
             # excel_generator), pas seulement dans un champ interne qui serait
             # perdu au tri des colonnes du template Corim.
+            #
+            # Junior Tip : on CONCATÈNE au commentaire déjà construit, on ne le
+            # réassigne pas. Une réassignation ici écrasait le flag de code
+            # équipement non conforme posé juste au-dessus (bug attrapé le 29/07
+            # au test : 3 lignes non conformes sur le rapport LEVAGE, mais 2
+            # seulement marquées, la ligne DEFAUT perdait son flag). Dès que
+            # deux règles peuvent marquer le même champ, il faut accumuler.
             commentaire_interne = (
-                f"{numero_rapport} [STATUT ITV MERE PROPOSE: E (EN COURS) - A CONFIRMER AVEC RICHARD]"
+                f"{commentaire_interne} "
+                "[STATUT ITV MERE PROPOSE: E (EN COURS) - A CONFIRMER AVEC RICHARD]"
             )
 
         # Une intervention par compte-rendu (voir comptes_rendus ci-dessus) :

@@ -208,3 +208,51 @@ jamais suivi) — faut-il créer une ligne mère dans le même fichier (NUMERO v
 les lignes filles référenceraient, et Corim sait-il résoudre ce genre de référence intra-fichier
 au moment de l'import ? Question à reposer explicitement à Richard/le support Corim, le modèle
 annoté ne tranche que le cas "mère déjà existante".
+
+## Addendum 2026-07-29 (bis) - Durcissement avant démo Maxence
+
+Passage du pipeline sur les 3 rapports réels disponibles (et non plus 2) avant la démo
+métier de 16h. Le 3e, `RA59215196-010-1` (LEVAGE 2026), n'avait jamais été testé : il
+sort 33 interventions et révèle 3 cas limites de repère machine absents des rapports
+MACHINES, tous silencieux jusqu'ici.
+
+⚠️ **Codes équipement non conformes non détectés.** `APPE_HABIT` est obligatoire côté
+Corim et suit la convention MACH + 4 chiffres. Sur ce rapport, trois blocs y échappent :
+un repère à 5 chiffres ("Client 80005" -> `MACH80005`, 5 chiffres, hors convention) et
+deux blocs sans aucun repère numérique ("Client ETIQUETAGE", "Client Bâtiment Service
+Mezzanine") qui produisent un `APPE_HABIT` vide. Ces lignes partaient à l'import telles
+quelles : soit rejet Corim, soit pire, rattachement au mauvais équipement. Décision : ne
+JAMAIS deviner un code (pas de troncature du 5 chiffres, pas de code inventé pour les
+blocs sans repère), mais marquer explicitement la ligne dans `COMMENTAIRE_INTERNE`
+(`[CODE EQUIPEMENT NON CONFORME: ... - A CORRIGER MANUELLEMENT AVANT IMPORT]`), visible
+directement dans l'Excel. Reprise manuelle assumée, sur une ligne signalée, plutôt qu'un
+import faux et silencieux.
+
+⚠️ **Bug attrapé dans le correctif lui-même, au test.** Le marquage ci-dessus était
+écrasé pour les lignes DEFAUT : le flag `[STATUT ITV MERE PROPOSE: E]` posé juste après
+faisait une réassignation de `commentaire_interne` au lieu d'une concaténation. Résultat
+au premier test : 3 lignes non conformes, 2 seulement marquées, la ligne DEFAUT perdait
+son flag en silence. Corrigé par accumulation.
+
+Junior Tip : dès que deux règles indépendantes peuvent écrire dans le même champ (ici un
+commentaire de suivi), il faut accumuler, jamais réassigner. Ce genre de bug ne se voit
+pas à la lecture du diff (les deux blocs sont corrects pris séparément), uniquement en
+comptant le résultat réel sur un jeu de données qui déclenche les deux règles à la fois.
+D'où le contrôle automatique ajouté au test de non-régression : `nombre de lignes non
+conformes == nombre de lignes marquées`, plutôt qu'une simple inspection visuelle.
+
+**État vérifié avant démo** (compilation complète + exécution des 3 rapports, zéro
+exception) : `A55432737-017-1` 20 ITV / 0 anomalie de code, `A59735423-009-1` 8 ITV /
+0 anomalie, `A59215196-010-1` 33 ITV / 3 anomalies toutes marquées. Excel régénérés dans
+`IA Apave Corim/A importer dans Corim/`.
+
+**Volontairement PAS traité avant la démo** : le bug d'ordre de lecture pdfplumber sur
+les mises en page à 2 colonnes (fragment "FLUIDES." sur MACH0074/0076, addendum
+précédent). Le fix propre passe par une extraction par coordonnées
+(`pdfplumber.extract_words` + clustering des mots par colonne sur `x0`), pas par un
+moteur OCR type Tesseract : le PDF Apave est natif, sa couche texte est exacte, seul
+l'ordre de lecture pose problème. Passer par de l'OCR reviendrait à rasteriser puis
+re-reconnaître des caractères déjà connus, en ajoutant un risque de confusion de
+caractères et d'accents, pour un gain nul sur la segmentation en colonnes. Chantier
+reporté après la démo : il touche le coeur de l'extraction, donc à ne pas livrer à
+quelques heures d'une présentation métier.
