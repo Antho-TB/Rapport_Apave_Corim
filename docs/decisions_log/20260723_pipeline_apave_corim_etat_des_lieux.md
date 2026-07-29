@@ -92,8 +92,6 @@ qui auraient produit un import silencieusement faux si non corrigées :
 - CODE_NATT : toujours vide, "à voir avec Corim" (réponse Maxence), pas de mapping possible
   aujourd'hui.
 - Nature technique "presse à balles" (MACH0535) : toujours en attente côté Richard.
-- Nouveau schéma `myreport` demandé par Antho : contenu et compte propriétaire à préciser avant
-  exécution (cf. règle "ne jamais deviner un besoin métier DB sans confirmation explicite").
 
 ## Bugs corrigés en cours de route (⚠️ gotchas)
 
@@ -150,3 +148,63 @@ Junior Tip : un rangement de dossiers n'est jamais "juste du cosmétique" en
 Python, chaque déplacement de fichier casse potentiellement un import ou un
 chemin relatif calculé au runtime. D'où la vérification systématique (compile
 + exécution réelle) avant de committer, pas seulement un déplacement visuel.
+
+## Addendum 2026-07-29 - Vérification pipeline suite mise à jour du 610 et annotations Antho
+
+Revue croisée du modèle annoté (`610 - Modèle d'import interventions Corim.xlsx`, feuille
+"Modèle") et d'une régénération réelle de l'Excel sur `RA55432737-017-1` (export test
+`Export ITV tests pour Anthony.xlsx`, 5 équipements : MACH0535/0252/0376/0334/0337).
+
+**2 bugs confirmés et corrigés :**
+
+1. ⚠️ **Zero-padding APPE_HABIT** (`apave_parser._extraire_code_client`) : l'ancien code
+   faisait `"MACH0" + repère brut`, correct uniquement si le repère fait déjà 3 chiffres
+   (ex: "337" -> "MACH0337"). Pour un repère à 2 chiffres ("84", "74", "76"), ça produisait
+   "MACH084" (3 chiffres) au lieu de "MACH0084" (4 chiffres, convention confirmée par
+   l'export Corim réel, zero-paddé sur 4 partout). Corrigé par un zero-padding explicite
+   (`f"MACH{int(...):04d}"`). Impact : ces équipements ne pouvaient JAMAIS matcher l'export
+   Corim, même quand ils y étaient référencés, à cause du mauvais nombre de zéros.
+2. ⚠️ **CODEST_MAINT jamais appliqué pour le cas PARTIEL** (`corim_mapping.enrich_...`) :
+   le cas PARTIEL (nature technique non standard, ex: MACH0535 presse à balles) sautait
+   tout l'enrichissement Corim (NUMERO/INTERV_ORIG/CODEST_MAINT/TYPE_MAINT), alors que
+   l'équipement est bien présent dans l'export (MACH0535 -> Numéro 31357, sous-type
+   REGLEMENTAIRE). Corrigé : seule la nature technique (CODE_NATT) reste un point manuel
+   pour Richard, le reste (NUMERO/INTERV_ORIG/CODEST_MAINT/TYPE_MAINT) suit désormais le
+   même enrichissement que les autres cas. CODEST_MAINT est aussi maintenant auto-appliqué
+   partout (plus seulement loggé en candidat) : le modèle annoté valide en vert
+   REGLEMENTAIRE et CORR SUITE CTRL, les 2 seules valeurs vues à ce jour dans un export réel.
+
+**Déjà corrigé, pas encore revalidé par Maxence :** le split "une ITV = une ligne" (Q11 du
+22/07) fonctionne bien sur le cas signalé (MACH0337, "Etat général des éléments..." /
+"Mécanismes d'embrayage..." bien séparés en 2 lignes en relançant le pipeline actuel). La
+feuille Google Sheets annotée montrait encore 1 seule ligne pour ce cas : elle a été générée
+avant le commit `c15c1d0` (split multi-défauts), donc avant ce correctif. À refaire tourner
+sur un export frais avant la prochaine revue avec Maxence pour éviter de rejuger un bug déjà
+réglé.
+
+**Déjà OK, confirmé par le test :** NUMERO (colonne B import) = Numéro (colonne A export)
+pour les cas CLOTURE/NON_VERIFIE (MACH0252 -> 31356). INTERV_ORIG (BF) = Numéro export pour
+les cas DEFAUT/PARTIEL (MACH0337 -> 31353, MACH0535 -> 31357 après correctif).
+
+**Nouveau bug détecté, non corrigé (nécessite un chantier dédié) :** 🔍 sur MACH0074/MACH0076,
+le texte extrait par pdfplumber mélange l'ordre de 2 colonnes du PDF (rapport en mise en page
+tabulaire 2 colonnes, ex: "EQUIPEMENT HYDRAULIQUE" et "PNEUMATIQUE / AUTRES" sont deux
+catégories différentes lues côte à côte, mais pdfplumber les linéarise entrelacées). Résultat :
+`_decouper_defauts` sépare un fragment "FLUIDES." tout seul, qui n'est pas un défaut mais un
+morceau d'en-tête de catégorie mal recollé par l'extraction. Le split au sens strict marche
+comme prévu, le problème est en amont, dans l'ordre de lecture du texte brut. Pas de fix
+tenté ici (nécessiterait une extraction par coordonnées/colonnes avec `pdfplumber.extract_words`,
+plus un vrai changement d'approche) ; à traiter comme un chantier séparé si ce type de mise
+en page est fréquent sur les rapports réels.
+
+**Toujours en dette, non tranché (mère/fille)** : le modèle annoté (lignes 5 à 7 de la feuille
+"Modèle") montre bien le pattern mère/fille demandé (STATUT mère = E, STATUT fille = A,
+INTERV_ORIG fille = NUMERO mère), mais avec un NUMERO mère qui existe déjà côté Corim
+(27931), pas un NUMERO généré dans le même import. Le pipeline actuel applique déjà cette
+règle quand une intervention Corim existe dans l'export (INTERV_ORIG = numéro existant,
+STATUT = A). Ce qui reste non résolu : le cas où AUCUNE intervention "mère" n'existe encore
+côté Corim pour l'équipement au moment de l'import (visite Apave sur un équipement neuf ou
+jamais suivi) — faut-il créer une ligne mère dans le même fichier (NUMERO vide, STATUT E) que
+les lignes filles référenceraient, et Corim sait-il résoudre ce genre de référence intra-fichier
+au moment de l'import ? Question à reposer explicitement à Richard/le support Corim, le modèle
+annoté ne tranche que le cas "mère déjà existante".

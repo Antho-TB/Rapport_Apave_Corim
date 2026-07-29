@@ -197,6 +197,15 @@ def enrich_interventions_with_corim_numbers(
             enriched.append(itv)
             continue
 
+        # Bug corrigé le 29/07 (revue Antho sur RA55432737-017-1, MACH0535) :
+        # le cas PARTIEL sautait TOUTE l'enrichissement Corim (NUMERO/INTERV_ORIG/
+        # CODEST_MAINT/TYPE_MAINT), alors même que l'équipement est présent dans
+        # l'export (ex: MACH0535 -> Numéro 31357, Sous-type REGLEMENTAIRE). Seule
+        # la nature technique (CODE_NATT) reste à traiter manuellement avec
+        # Richard (cas particulier = presse à balles/équipement non standard) ;
+        # les autres champs disponibles dans l'export n'ont aucune raison de
+        # rester vides. On ajoute donc le commentaire de suivi manuel, mais on
+        # laisse le flux continuer vers l'enrichissement normal ci-dessous.
         if match["cas_particulier"] or cas == "PARTIEL":
             logging.warning(
                 f"[ATTENTION] {appe_habit} : cas particulier (nature technique non standard), "
@@ -204,8 +213,6 @@ def enrich_interventions_with_corim_numbers(
             )
             note = itv.get("COMMENTAIRE_INTERNE", "")
             itv["COMMENTAIRE_INTERNE"] = f"{note} [CAS PARTICULIER, VOIR RICHARD]".strip()
-            enriched.append(itv)
-            continue
 
         if cas in ("CLOTURE", "NON_VERIFIE"):
             # On referme/complète l'ITV existante : colonne NUMERO uniquement.
@@ -225,15 +232,17 @@ def enrich_interventions_with_corim_numbers(
         if match.get("code_natt"):
             itv["CODE_NATT"] = match["code_natt"]
 
-        # CODEST_MAINT : toujours PAS auto-rempli, même après correction de la
-        # colonne source (22/07, Sous-type de maintenance). Réponse Maxence Q5 :
-        # "peut y en avoir d'autres, liste à faire par Richard" -> pas encore un
-        # feu vert pour appliquer automatiquement, on continue de log un candidat.
+        # CODEST_MAINT : auto-appliqué depuis le 29/07 (revue Antho sur
+        # RA55432737-017-1). Jusqu'ici volontairement pas appliqué (réponse
+        # Maxence Q5 du 22/07 : "peut y en avoir d'autres, liste à faire par
+        # Richard"), mais le modèle d'import annoté (610 - Modèle d'import
+        # interventions Corim.xlsx) valide désormais REGLEMENTAIRE et CORR
+        # SUITE CTRL en vert, les deux seules valeurs vues à ce jour dans
+        # l'export Corim réel (même valeurs déjà en dur côté parseur pour
+        # CLOTURE/DEFAUT). Le cas PARTIEL (ex: MACH0535) ne recevait jamais ce
+        # champ faute d'application : corrigé ici.
         if match.get("codest_maint"):
-            logging.info(
-                f"[INFO] {appe_habit} : code candidat pour CODEST_MAINT détecté ('{match['codest_maint']}') "
-                "mais non appliqué automatiquement, à confirmer avec Richard avant réutilisation."
-            )
+            itv["CODEST_MAINT"] = match["codest_maint"]
 
         # TYPE_MAINT : réponse Maxence Q1 du 22/07 ("Ils sont dans l'export CORIM")
         # -> auto-appliqué, contrairement à CODEST_MAINT (pas la même réserve de

@@ -84,7 +84,9 @@ confirmé les codes (nature technique / sous-type de maintenance propres à TB G
 ## ⚠️ Alertes actives
 - `src/utils/pdf_extractor.py` = doublon avec `fiche_de_controle/src/pdf_extractor.py`
   → Candidat extraction en lib partagée `tb_document_ai`
-- `CODE_NATT`/`CODEST_MAINT` non fiabilisés, **confirmé volontairement vide pour le moment** (réponse Antho du 22/07) : pas d'enrichissement de l'export prévu à court terme, à revalider avec Richard Berthet quand la nature technique "presse à balles" (cas MACH0535) sera créée dans Corim.
+- `CODE_NATT` non fiabilisé, **confirmé volontairement vide pour le moment** (réponse Antho du 22/07) : à revalider avec Richard Berthet quand la nature technique "presse à balles" (cas MACH0535) sera créée dans Corim. `CODEST_MAINT`, lui, est auto-appliqué depuis le 29/07 (voir addendum ADR du 29/07).
+- 🔍 **Découverte 29/07** : sur certains rapports (ex: MACH0074/MACH0076), pdfplumber mélange l'ordre de 2 colonnes du PDF (mise en page tabulaire), produisant un faux fragment de défaut ("FLUIDES.") lors du split. Pas encore corrigé, nécessiterait une extraction par coordonnées (`extract_words`). Voir addendum ADR du 29/07 pour le détail.
+- Mère/fille (INTERVENTION_MERE/INTERV_ORIG) : réglé quand une intervention existe déjà côté Corim (cas courant), mais le cas "aucune mère existante côté Corim au moment de l'import" reste sans réponse (création d'une ligne mère dans le même fichier ? Corim résout-il une référence intra-fichier ?). Voir addendum ADR du 29/07.
 - Interlocuteur projet : m.houdelot@tb-groupe.fr (Maxence Houdelot), r.berthet@tb-groupe.fr (Richard Berthet, contact Corim)
 
 ## Workflow confirmé (Antho, 22/07)

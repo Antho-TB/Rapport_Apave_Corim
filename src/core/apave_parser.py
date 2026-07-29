@@ -100,7 +100,18 @@ def _extraire_code_client(bloc: str) -> str:
     if not match:
         return ""
     nombres = re.findall(r"\d+", match.group(1))
-    return f"MACH0{nombres[-1]}" if nombres else ""
+    if not nombres:
+        return ""
+    # Bug corrigé le 29/07 (revue Antho, comparaison avec l'export Corim réel) :
+    # un ancien essai faisait "MACH0" + nombre brut, ce qui ne donne 4 chiffres
+    # qu'à condition que le repère machine fasse déjà 3 chiffres (ex: "337" ->
+    # "MACH0337"). Pour un repère à 2 chiffres ("84") ça produisait "MACH084"
+    # (3 chiffres) au lieu de "MACH0084" (4 chiffres), cassant tout matching
+    # avec l'export Corim qui zero-pad systématiquement sur 4 chiffres (vérifié
+    # sur les 5 équipements de l'export test : MACH0535, MACH0252, MACH0376,
+    # MACH0334, MACH0337, tous à 4 chiffres). On zero-pad explicitement sur 4,
+    # quelle que soit la longueur du repère brut.
+    return f"MACH{int(nombres[-1]):04d}"
 
 
 def _extraire_designation(bloc: str) -> str:
