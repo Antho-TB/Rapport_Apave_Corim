@@ -113,3 +113,15 @@ qui auraient produit un import silencieusement faux si non corrigées :
 
 Démo métier avec Maxence sur les 2 rapports tests (`RA59735423-009-1`, `RA55432737-017-1`),
 recette du split multi-défauts et arbitrage Richard sur les points de dette ci-dessus.
+
+## Addendum 2026-07-23 - Compte de service pour le partage réseau maintenance
+
+Décision Antho : remplacer le dépôt manuel des PDF Apave par Richard (dossier
+`IA Apave Corim/A traiter`) par une lecture automatique du partage réseau du service
+maintenance, via un compte de service dédié. Même pattern que FUSEAU/Data-Achat :
+compte AD `svc-data_achat`, créé par Samuel SELLIER (IT Réseau), mot de passe dans
+`kv-dtpf-prod` (secret `svc-dataachat-ad-password`), lecture directe des fichiers
+sources sur `\\192.168.102.55\partage\ADA\METIER\SUIVI CDES IMPORT\` sans copie
+manuelle locale. Pour Apave/Corim : compte `svc-apave_corim` (ou équivalent) à
+demander à Samuel, chemin UNC du partage maintenance encore à confirmer avec
+Richard/Maxence. Dette ajoutée au plan d'action (voir CLAUDE.md).

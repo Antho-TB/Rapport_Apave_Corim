@@ -47,15 +47,16 @@ risque (hallucination, déjà rencontré), un coût, et une dépendance Key Vaul
 DEFAUT/CLOTURE/NON_VERIFIE/PARTIEL). `ai_processor.py` (Gemini) reste en repli
 uniquement si `RapportFormatInconnu` est levée (ex: nouvelle version de template).
 
-## Persistance DWH (22/07, à valider avant premier run réel)
-Schéma `apave_corim` proposé sur `dtpf_sylob_prod` (DDL dans `deploy/sql/`), avec
-deux tables : `rapports_traites` (audit par PDF) et `interventions_extraites`
-(historique interrogeable, remplace le Excel comme source de vérité). Le loader
-réutilise le compte de service partagé `myreport` (kv-dtpf-prod) documenté dans le
-skill azure-tb — **point à challenger avec Antho : un compte dédié `apave-corim`
-serait plus propre pour l'audit, à trancher avant la mise en prod**. Écriture DWH
-toujours best-effort (n'interrompt jamais la génération Excel si le VPN/schéma
-n'est pas disponible).
+## Persistance DWH (créé le 22/07, en prod)
+Schéma `apave_corim` créé sur `dtpf_sylob_prod` (DDL dans `deploy/sql/`, 4 migrations
+appliquées à date), avec deux tables : `rapports_traites` (audit par PDF) et
+`interventions_extraites` (historique interrogeable, remplace l'Excel comme source
+de vérité). Le loader utilise le compte dédié `dtpf_sylob_anthony_bezille_prod`
+(secrets `psql-prod-sylob-anthony-bezille-login/-password` dans `kv-dtpf-prod`),
+PAS le compte partagé `myreport` : même principe d'isolation que sur FUSEAU/Data-Achat
+(ADR ERP Achat du 10/06), un pipeline tiers ne doit jamais réutiliser un compte de
+service d'un autre projet. Écriture DWH toujours best-effort (n'interrompt jamais
+la génération Excel si le VPN/schéma n'est pas disponible).
 
 ## Logique métier Corim (mise à jour 22/07)
 Le LLM ne renseigne JAMAIS `INTERVENTION_MERE`/`NUMERO`/`INTERV_ORIG` (impossible à
@@ -75,9 +76,23 @@ confirmé les codes (nature technique / sous-type de maintenance propres à TB G
 
 ## Workflow confirmé (Antho, 22/07)
 - **Export Corim** : régénéré manuellement par Maxence à chaque lot. Pas d'API ni de connexion SQL directe pour l'instant, sujet en discussion côté direction (à suivre, potentiel gain futur pour supprimer cette étape manuelle).
-- **Dépôt des PDF Apave** : manuel, au fil de l'eau, fait par Richard Berthet dans `IA Apave Corim/A traiter`. Confirme que l'architecture "Dossier Magique" de `batch_processor.py` est la bonne cible, pas besoin d'un scan réseau automatisé pour le moment.
+- **Dépôt des PDF Apave** : manuel, au fil de l'eau, fait par Richard Berthet dans `IA Apave Corim/A traiter`. Architecture "Dossier Magique" de `batch_processor.py` confirmée comme bonne cible. **Révisé le 23/07 (voir Plan d'action) : cible désormais un scan réseau automatisé via compte de service, le dépôt manuel devenant une étape intermédiaire à supprimer.**
 - **DEMANDE (Corim)** : texte libre accepté côté Corim, pas de contrainte de format à gérer dans `ai_processor.py`.
 - **Nature technique équipements atypiques (ex: presse à balles MACH0535)** : statut à reconfirmer avec Richard, pas encore tranché au 22/07.
+
+## Plan d'action
+
+- **[23/07] Compte de service dédié pour le partage réseau maintenance** (Antho) :
+  remplacer le dépôt manuel des PDF Apave par Richard par un accès direct de l'ETL
+  au dossier du serveur de fichiers du service maintenance, via un compte de service
+  AD dédié, même pattern que `svc-data_achat` sur FUSEAU/Data-Achat (compte `svc-`
+  créé par Samuel SELLIER, IT Réseau, mot de passe stocké dans `kv-dtpf-prod` sous
+  un secret `svc-<projet>-ad-password`, jamais de credentials en dur). Reprend le
+  rôle aujourd'hui tenu par `batch_processor.py`/dossier `A traiter`, qui devient
+  alors une lecture réseau directe plutôt qu'un dossier local alimenté à la main.
+  **Action à faire** : demander la création du compte à Samuel SELLIER, obtenir le
+  chemin UNC exact du partage réseau maintenance (à confirmer avec Richard/Maxence,
+  inconnu à ce jour), documenter le résultat ici une fois le compte opérationnel.
 
 ## Standards TB Groupe
 - Python 3.11, type hints partout
