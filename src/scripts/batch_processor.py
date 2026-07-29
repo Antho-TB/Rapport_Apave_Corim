@@ -17,20 +17,21 @@ import shutil
 import time
 import logging
 from datetime import datetime
+from pathlib import Path
 from azure.identity import DefaultAzureCredential
 from azure.keyvault.secrets import SecretClient
 
-from src.pdf_extractor import extract_text_from_pdf
-from src.apave_parser import parse_apave_report, RapportFormatInconnu
-from src.ai_processor import parse_apave_text_to_corim_json
-from src.excel_generator import generate_corim_excel
-from src.corim_mapping import load_corim_export, enrich_interventions_with_corim_numbers
+from src.utils.pdf_extractor import extract_text_from_pdf
+from src.core.apave_parser import parse_apave_report, RapportFormatInconnu
+from src.core.ai_processor import parse_apave_text_to_corim_json
+from src.core.excel_generator import generate_corim_excel
+from src.core.corim_mapping import load_corim_export, enrich_interventions_with_corim_numbers
 
 # Chargement DWH optionnel : nécessite le schéma apave_corim (voir deploy/sql/) et
 # le VPN Stormshield actif. Import protégé pour ne pas bloquer le pipeline Excel
 # si sqlalchemy/psycopg2 ne sont pas encore installés (cf. requirements.txt du 22/07).
 try:
-    from src.dwh_loader import get_engine, enregistrer_rapport
+    from src.core.dwh_loader import get_engine, enregistrer_rapport
     _DWH_DISPONIBLE = True
 except ImportError:
     _DWH_DISPONIBLE = False
@@ -43,7 +44,13 @@ logging.basicConfig(
 )
 
 # Configuration des dossiers magiques
-BASE_DIR = os.path.join(os.getcwd(), "IA Apave Corim")
+# Junior Tip : dérivé de __file__ (racine projet = 3 niveaux au-dessus de
+# src/scripts/), pas de os.getcwd(). Depuis le passage à l'arborescence
+# canonique (src/core, src/scripts...) le script peut être lancé depuis
+# n'importe quel répertoire de travail sans casser la localisation du
+# dossier métier "IA Apave Corim".
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+BASE_DIR = os.path.join(PROJECT_ROOT, "IA Apave Corim")
 DIR_INPUT = os.path.join(BASE_DIR, "A traiter")
 DIR_OUTPUT = os.path.join(BASE_DIR, "A importer dans Corim")
 DIR_ARCHIVE = os.path.join(BASE_DIR, "Traité, archive")

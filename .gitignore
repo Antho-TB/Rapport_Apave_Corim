@@ -9,8 +9,8 @@ __pycache__/
 !.env.example
 *.json
 
-# Dossiers d'archives et données
-archives/
+# Dossiers d'archives et données (rangement du 29/07 : archives/ racine -> data/)
+data/
 IA Apave Corim/
 test_import.xlsx
 *.pdf

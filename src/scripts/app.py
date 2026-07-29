@@ -17,16 +17,22 @@ import streamlit as st
 import os
 import shutil
 from datetime import datetime
+from pathlib import Path
 from azure.identity import DefaultAzureCredential
 from azure.keyvault.secrets import SecretClient
 import logging
 import pandas as pd
 
-from src.pdf_extractor import extract_text_from_pdf
-from src.apave_parser import parse_apave_report, RapportFormatInconnu
-from src.ai_processor import parse_apave_text_to_corim_json
-from src.excel_generator import generate_corim_excel
-from src.corim_mapping import load_corim_export, enrich_interventions_with_corim_numbers
+from src.utils.pdf_extractor import extract_text_from_pdf
+from src.core.apave_parser import parse_apave_report, RapportFormatInconnu
+from src.core.ai_processor import parse_apave_text_to_corim_json
+from src.core.excel_generator import generate_corim_excel
+from src.core.corim_mapping import load_corim_export, enrich_interventions_with_corim_numbers
+
+# Racine projet dérivée de __file__ (3 niveaux au-dessus de src/scripts/) :
+# permet de lancer `streamlit run src/scripts/app.py` depuis n'importe quel
+# répertoire de travail sans casser les chemins vers "IA Apave Corim"/"data".
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 
 
 def _get_gemini_credentials() -> bool:
@@ -68,7 +74,7 @@ Cet outil simplifie l'intégration des rapports Apave.
 Glissez-déposez votre rapport PDF ci-dessous pour générer automatiquement le fichier Excel compatible avec Corim.
 """)
 
-ARCHIVE_DIR = os.path.join(os.getcwd(), "archives")
+ARCHIVE_DIR = os.path.join(PROJECT_ROOT, "data", "archives_streamlit")
 if not os.path.exists(ARCHIVE_DIR):
     os.makedirs(ARCHIVE_DIR)
 
@@ -79,7 +85,7 @@ if uploaded_file is not None:
     
     # Stratégie I/O : Streamlit conserve le fichier en RAM via BytesIO.
     # On le matérialise sur le disque temporairement car PyPDF2/PDFPlumber ont besoin d'un path physique.
-    temp_pdf_path = os.path.join(os.getcwd(), uploaded_file.name)
+    temp_pdf_path = os.path.join(PROJECT_ROOT, uploaded_file.name)
     with open(temp_pdf_path, "wb") as f:
         f.write(uploaded_file.getbuffer())
         
@@ -103,7 +109,7 @@ if uploaded_file is not None:
         # Alignement des numéros Corim (NUMERO / INTERV_ORIG) à partir de l'export
         # réel fourni par Maxence. Ni le parseur déterministe ni le LLM ne les
         # fournissent volontairement (voir Junior Tip dans src/ai_processor.py).
-        corim_export_path = os.path.join(os.getcwd(), "IA Apave Corim", "Export ITV tests pour Anthony.xlsx")
+        corim_export_path = os.path.join(PROJECT_ROOT, "IA Apave Corim", "Export ITV tests pour Anthony.xlsx")
         if os.path.exists(corim_export_path) and structured_data.get("interventions"):
             with st.spinner("Alignement des numéros Corim..."):
                 corim_index = load_corim_export(corim_export_path)

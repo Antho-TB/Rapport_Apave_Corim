@@ -30,7 +30,10 @@ from dotenv import load_dotenv
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import URL
 
-_env_path = Path(__file__).resolve().parent.parent / ".env"
+# Racine projet = 3 niveaux au-dessus de src/core/dwh_loader.py (arborescence
+# canonique depuis le rangement du 29/07). Le fallback local .env vit dans
+# config/ (convention TB Groupe), pas à la racine.
+_env_path = Path(__file__).resolve().parent.parent.parent / "config" / ".env"
 load_dotenv(dotenv_path=_env_path)
 
 logger = logging.getLogger(__name__)

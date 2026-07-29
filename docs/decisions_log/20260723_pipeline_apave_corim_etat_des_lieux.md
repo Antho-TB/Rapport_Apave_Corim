@@ -125,3 +125,28 @@ sources sur `\\192.168.102.55\partage\ADA\METIER\SUIVI CDES IMPORT\` sans copie
 manuelle locale. Pour Apave/Corim : compte `svc-apave_corim` (ou équivalent) à
 demander à Samuel, chemin UNC du partage maintenance encore à confirmer avec
 Richard/Maxence. Dette ajoutée au plan d'action (voir CLAUDE.md).
+
+## Addendum 2026-07-29 - Rangement, arborescence canonique TB Groupe
+
+Le `src/` "flat" (6 fichiers au même niveau) est remplacé par l'arborescence
+canonique des standards Antho : `src/core` (logique métier : parseur, mapping,
+générateur Excel, loader DWH), `src/utils` (helpers transverses : extraction PDF),
+`src/scripts` (points d'entrée exécutables : `batch_processor.py`, `app.py`),
+`src/tests` (vide, prêt pour pytest). `config/` accueille les templates `.env`
+(le vrai `.env`, relique pré-Key Vault jamais utilisée par le code depuis le
+22/07, a été supprimé). `data/archives_streamlit/` remplace le dossier
+`archives/` racine (backups locaux de l'interface Streamlit, distinct de
+`IA Apave Corim/Traité, archive/` qui reste le dossier métier du batch).
+
+Tous les imports (`from src.X import`) mis à jour vers `src.core.X`/`src.utils.X`.
+Les chemins qui reposaient sur `os.getcwd()` (dossier `IA Apave Corim`, export
+Corim, archive Streamlit) sont désormais dérivés de `__file__` : les scripts
+fonctionnent quel que soit le répertoire de travail depuis lequel ils sont
+lancés, plus seulement depuis la racine du projet. Vérifié par compilation de
+tous les modules et exécution du pipeline complet (parse + mapping + génération
+Excel) sur un rapport réel après réorganisation.
+
+Junior Tip : un rangement de dossiers n'est jamais "juste du cosmétique" en
+Python, chaque déplacement de fichier casse potentiellement un import ou un
+chemin relatif calculé au runtime. D'où la vérification systématique (compile
++ exécution réelle) avant de committer, pas seulement un déplacement visuel.

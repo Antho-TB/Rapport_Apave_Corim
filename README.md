@@ -16,13 +16,13 @@ le fichier Excel généré reste soumis à vérification humaine avant import.
 ```
 PDF Apave (dossier "A traiter")
         v
-Extraction déterministe (regex/positionnel, src/apave_parser.py)
+Extraction déterministe (regex/positionnel, src/core/apave_parser.py)
         v  [repli si format non reconnu]
-Extraction LLM Gemini (src/ai_processor.py)
+Extraction LLM Gemini (src/core/ai_processor.py)
         v
-Alignement avec l'export Corim réel de Maxence (src/corim_mapping.py)
+Alignement avec l'export Corim réel de Maxence (src/core/corim_mapping.py)
         v
-Génération Excel format import Corim (src/excel_generator.py)
+Génération Excel format import Corim (src/core/excel_generator.py)
         v
 Excel dans "A importer dans Corim"  +  trace optionnelle dans le DWH (best-effort)
         v
@@ -39,19 +39,27 @@ décision : `docs/decisions_log/20260723_pipeline_apave_corim_etat_des_lieux.md`
 
 ## Structure du repo
 
+Arborescence canonique TB Groupe (standards Antho, cf. `docs/decisions_log/`) :
+
 ```
 src/
-├── apave_parser.py      # Extraction déterministe (regex) du PDF Apave, chemin principal
-├── ai_processor.py      # Extraction LLM (Gemini/Vertex AI), repli si format PDF inconnu
-├── corim_mapping.py     # Résout NUMERO/INTERV_ORIG/TYPE_MAINT depuis l'export Corim réel
-├── dwh_loader.py         # Écriture optionnelle vers apave_corim.* (dtpf_sylob_prod)
-├── pdf_extractor.py     # Extraction texte brut du PDF (pdfplumber)
-└── excel_generator.py   # Génération Excel (format pivot d'import Corim, 61 colonnes)
-app.py                   # Interface Streamlit (dépôt manuel d'un PDF, aperçu, téléchargement)
-batch_processor.py       # Orchestrateur batch "Dossier Magique" (traitement par lot)
-deploy/sql/              # DDL + migrations du schéma apave_corim (dtpf_sylob_prod)
-docs/decisions_log/      # ADR datés : pourquoi chaque décision technique a été prise
-IA Apave Corim/           # Dossiers métier : A traiter, A importer dans Corim, archives
+├── core/                  # Logique métier du pipeline
+│   ├── apave_parser.py      # Extraction déterministe (regex) du PDF Apave, chemin principal
+│   ├── ai_processor.py      # Extraction LLM (Gemini/Vertex AI), repli si format PDF inconnu
+│   ├── corim_mapping.py     # Résout NUMERO/INTERV_ORIG/TYPE_MAINT depuis l'export Corim réel
+│   ├── dwh_loader.py        # Écriture optionnelle vers apave_corim.* (dtpf_sylob_prod)
+│   └── excel_generator.py   # Génération Excel (format pivot d'import Corim, 61 colonnes)
+├── utils/
+│   └── pdf_extractor.py     # Extraction texte brut du PDF (pdfplumber)
+├── scripts/                # Points d'entrée exécutables
+│   ├── batch_processor.py    # Orchestrateur batch "Dossier Magique" (traitement par lot)
+│   └── app.py                 # Interface Streamlit (dépôt manuel d'un PDF, aperçu, téléchargement)
+└── tests/                  # pytest (à peupler)
+config/                    # .env.template, .env.example (secrets réels non commités)
+data/archives_streamlit/   # Backups locaux des PDF traités via l'interface Streamlit
+deploy/sql/                 # DDL + migrations du schéma apave_corim (dtpf_sylob_prod)
+docs/decisions_log/         # ADR datés : pourquoi chaque décision technique a été prise
+IA Apave Corim/              # Dossiers métier : A traiter, A importer dans Corim, archives
 ```
 
 ## Installation
@@ -62,8 +70,8 @@ python -m venv .venv
 pip install -r requirements.txt
 ```
 
-Copier `.env.template` vers `.env` et renseigner les variables (Key Vault en
-production, `.env` local en repli uniquement, jamais de secret en dur) :
+Copier `config/.env.template` vers `config/.env` et renseigner les variables
+(Key Vault en production, `.env` local en repli uniquement, jamais de secret en dur) :
 
 | Variable | Rôle |
 |---|---|
@@ -74,11 +82,14 @@ production, `.env` local en repli uniquement, jamais de secret en dur) :
 
 ## Usage
 
+Toutes les commandes se lancent depuis la racine du projet (les chemins internes sont
+dérivés de `__file__`, indépendants du répertoire de travail).
+
 **Traitement par lot (production)** : déposer les PDF dans
 `IA Apave Corim/A traiter/`, puis :
 
 ```bash
-python batch_processor.py
+python src/scripts/batch_processor.py
 ```
 
 Génère un Excel par PDF dans `A importer dans Corim/`, écrit dans le DWH si le VPN
@@ -88,7 +99,7 @@ source dans `Traité, archive/<année>/`.
 **Traitement manuel (ponctuel, démo)** :
 
 ```bash
-streamlit run app.py
+streamlit run src/scripts/app.py
 ```
 
 ## Statut et points ouverts
