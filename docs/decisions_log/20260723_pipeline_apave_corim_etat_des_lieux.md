@@ -312,3 +312,37 @@ trop, parfois pas assez), c'est presque toujours qu'on découpe sur le mauvais s
 on cherchait une ponctuation de fin de phrase (". -") là où le format encodait la fin d'un
 bloc par sa POSITION (tiret en fin de ligne). Ajouter des exceptions à la regex n'aurait
 fait que déplacer le problème, il fallait changer de signal.
+
+## Addendum 2026-07-29 (quater) - Le rapport contient sa propre référence de contrôle
+
+Remarque d'Antho : le tableau de synthèse (pages 2-3) porte, en tête de chaque ligne
+d'équipement, un chiffre qui est le nombre d'observations relevées. Ex: `2 DELTECO 337
+1700333 1` = 2 observations pour le N° Ordre 1. Une ligne sans chiffre (`ARBUG 252 825977
+14`) signifie zéro observation.
+
+C'est une source de vérité **indépendante de notre découpage** : Apave compte lui-même ses
+observations, en tête de document, alors que nous les recomptons en fin de document depuis
+les pages Observations. Deux chemins distincts vers le même nombre, donc un contrôle
+croisé gratuit. Jusqu'ici ce chiffre servait de vérification manuelle ponctuelle (cité dans
+l'addendum du 22/07 comme "badges numérotés de la page de synthèse") ; il est désormais
+extrait et comparé automatiquement à chaque exécution (`_extraire_badges_synthese`).
+
+En cas d'écart, la ligne est marquée `[ECART DECOUPAGE: n ITV GENEREE(S) POUR m
+OBSERVATION(S) ANNONCEE(S) PAR APAVE - A VERIFIER]` dans `COMMENTAIRE_INTERNE`, et un
+warning est loggé. Le pipeline ne s'arrête pas : sur un rapport d'un gabarit inconnu, mieux
+vaut produire un Excel signalé qu'aucun Excel du tout.
+
+Un badge à 0 est volontairement ignoré par le contrôle : c'est le cas légitime "Par
+ailleurs" (MACH0370, MACH0448), une remarque annexe sur un équipement par ailleurs
+conforme. Apave ne la compte pas comme observation, mais elle doit bien produire une ITV
+de notre côté.
+
+**Résultat sur les 3 rapports : zéro écart** (19 / 7 / 33 ITV). Le découpage par tiret de
+fin de ligne est donc validé par le rapport lui-même, plus seulement par un comptage manuel
+sur quelques cas.
+
+Junior Tip : avant d'écrire un jeu de tests à la main, vérifier si la source de données ne
+contient pas déjà sa propre référence de contrôle (total, compteur, checksum, récapitulatif
+en tête de document). C'est plus robuste qu'un jeu d'assertions figé, parce que le contrôle
+s'applique automatiquement à TOUS les futurs rapports, y compris ceux qu'on n'a jamais vus,
+au lieu de valider seulement les 3 exemples qu'on avait sous la main le jour du dev.

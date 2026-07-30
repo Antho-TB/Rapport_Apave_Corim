@@ -48,6 +48,14 @@ MOTIF_PARTIEL = re.compile(r"[eé]l[ée]ments non v[ée]rifi[ée]s", re.IGNORECA
 # rattachées au bloc précédent lors du split).
 DECOUPE_BLOC = re.compile(r"N°\s*Ordre\s+(\d+)\s*\nRapport de vérification\s*\n")
 
+# Ligne du tableau de synthèse (pages 2-3 du rapport) : un badge OPTIONNEL en tête
+# (le nombre d'observations relevées sur l'équipement), du texte au milieu
+# (désignation, fabricant, repères, n° identification), et le N° Ordre en fin de
+# ligne. Ex: "2 DELTECO 337 1700333 1" = 2 observations, ordre 1. Une ligne sans
+# badge en tête ("ARBUG 252 825977 14") signifie zéro observation : équipement
+# conforme, non vérifié, ou vérification partielle.
+LIGNE_SYNTHESE = re.compile(r"^(?:(\d+)\s+)?\D.*?\s(\d+)$")
+
 
 class RapportFormatInconnu(Exception):
     """
@@ -125,6 +133,45 @@ def _extraire_code_client(bloc: str) -> str:
     # repère appartient à une autre famille de codes Corim, soit c'est une
     # coquille du rapport Apave. À confirmer avec Richard, ne pas tronquer.
     return f"MACH{int(nombres[-1]):04d}"
+
+
+def _extraire_badges_synthese(texte: str, ordres_valides: set[int]) -> dict[int, int]:
+    """
+    Lit le tableau de synthèse (pages 2-3) et retourne {N° Ordre: nb d'observations}.
+
+    Junior Tip (ajouté le 29/07, sur remarque d'Antho) : Apave publie lui-même, en
+    tête de rapport, le nombre d'observations relevées par équipement, sous forme
+    d'un chiffre en début de ligne du tableau de synthèse. C'est une source de
+    vérité INDÉPENDANTE de notre découpage des pages Observations : elle permet de
+    vérifier automatiquement que le pipeline produit le bon nombre d'ITV, au lieu
+    de compter à la main sur chaque rapport. Un équipement sans chiffre a zéro
+    observation (conforme, non vérifié, ou vérification partielle).
+
+    Args:
+        texte: texte brut complet du PDF.
+        ordres_valides: N° Ordre réellement présents dans le rapport (issus du
+            découpage en blocs). Sert de filtre anti-bruit : le tableau contient
+            aussi des numéros d'identification et des numéros de page qui matchent
+            le motif de ligne mais ne sont pas des N° Ordre.
+
+    Returns:
+        Un dictionnaire {N° Ordre: nombre d'observations attendu}. Vide si le
+        tableau de synthèse n'est pas reconnu (rapport d'un autre gabarit).
+    """
+    # Le tableau s'arrête à la ligne de total, qui clôt la synthèse.
+    zone = re.split(r"Nombre total d'observations", texte)[0]
+
+    badges: dict[int, int] = {}
+    for ligne in zone.splitlines():
+        match = LIGNE_SYNTHESE.match(ligne.strip())
+        if not match:
+            continue
+        ordre = int(match.group(2))
+        if ordre not in ordres_valides:
+            continue
+        badges[ordre] = int(match.group(1)) if match.group(1) else 0
+
+    return badges
 
 
 def _extraire_designation(bloc: str) -> str:
@@ -363,11 +410,20 @@ def parse_apave_report(texte: str) -> dict:
     blocs = list(zip(morceaux[1::2], morceaux[2::2]))
     interventions: list[dict] = []
 
-    for _, bloc in blocs:
+    # Contrôle croisé avec le tableau de synthèse d'Apave (voir
+    # _extraire_badges_synthese) : le rapport annonce lui-même combien
+    # d'observations il contient par équipement. On compare ce nombre au nombre
+    # de lignes que notre découpage produit, pour détecter automatiquement un
+    # sur-découpage ou un sous-découpage sur un futur rapport, sans avoir à
+    # recompter à la main.
+    badges = _extraire_badges_synthese(texte, {int(n) for n, _ in blocs})
+
+    for ordre, bloc in blocs:
         appe_habit = _extraire_code_client(bloc)
         designation = _extraire_designation(bloc)
         cas = _classifier_bloc(bloc)
         statut_a_confirmer = False
+        ecart_decoupage = ""
 
         date_verif = _extraire_date_verification(bloc)
         if date_verif:
@@ -391,6 +447,23 @@ def parse_apave_report(texte: str) -> dict:
             comptes_rendus = _extraire_defauts(bloc) or [f"Anomalie relevée sur {designation}."]
             libe_inter = f"Défaut relevé {appe_habit}"
             statut, codest_maint = "A", "CORR SUITE CTRL"
+
+            # Contrôle croisé badge de synthèse (voir _extraire_badges_synthese).
+            # Un badge à 0 est ignoré : c'est le cas légitime "Par ailleurs"
+            # (remarque annexe sur un équipement par ailleurs conforme, donc pas
+            # comptée comme observation par Apave, mais qui produit bien une ITV
+            # chez nous). Tout autre écart est un vrai défaut de découpage.
+            attendu = badges.get(int(ordre))
+            if attendu and attendu != len(comptes_rendus):
+                ecart_decoupage = (
+                    f"[ECART DECOUPAGE: {len(comptes_rendus)} ITV GENEREE(S) "
+                    f"POUR {attendu} OBSERVATION(S) ANNONCEE(S) PAR APAVE - A VERIFIER]"
+                )
+                logging.warning(
+                    f"[ATTENTION] {appe_habit} (N° Ordre {ordre}) : le rapport annonce "
+                    f"{attendu} observation(s) dans sa synthèse, le découpage en produit "
+                    f"{len(comptes_rendus)}. Ligne marquée pour vérification."
+                )
         elif cas == "CLOTURE":
             comptes_rendus = ["Clôture de l'intervention suite au rapport de vérification périodique Apave, aucune anomalie détectée."]
             libe_inter = f"Clôture VGP Apave {appe_habit}"
@@ -474,6 +547,8 @@ def parse_apave_report(texte: str) -> dict:
                 f"{commentaire_interne} "
                 "[STATUT ITV MERE PROPOSE: E (EN COURS) - A CONFIRMER AVEC RICHARD]"
             )
+        if ecart_decoupage:
+            commentaire_interne = f"{commentaire_interne} {ecart_decoupage}"
 
         # Une intervention par compte-rendu (voir comptes_rendus ci-dessus) :
         # pour CLOTURE/NON_VERIFIE/PARTIEL, c'est toujours une seule ligne ;
