@@ -156,10 +156,13 @@ def _extraire_observations(bloc: str) -> str:
     )
     if not match:
         return ""
-    # Nettoyage : on recolle les lignes coupées par la mise en page PDF et on
-    # retire les tirets de fin de paragraphe laissés par l'extraction.
-    texte = " ".join(l.strip() for l in match.group(1).splitlines() if l.strip())
-    return texte.rstrip("- ").strip()
+    # Changement du 29/07 : on conserve les RETOURS À LA LIGNE (au lieu de tout
+    # recoller en une seule chaîne). Le découpage en défauts individuels
+    # (_decouper_defauts) a besoin de la structure en lignes du PDF : le
+    # marqueur de fin d'un défaut est un tiret en FIN DE LIGNE, information
+    # perdue dès qu'on aplatit le texte. Le recollage se fait plus tard, une
+    # fois chaque défaut isolé.
+    return "\n".join(l.strip() for l in match.group(1).splitlines() if l.strip())
 
 
 def _decouper_defauts(texte_observations: str) -> list[str]:
@@ -172,22 +175,60 @@ def _decouper_defauts(texte_observations: str) -> list[str]:
     présents dans sa page Observations (ex: MACH0337 badge "2" = "ÉLÉMENTS
     CONSTITUTIFS" + "ÉLÉMENTS MÉCANIQUES").
 
-    Piège corrigé le 22/07 : un premier essai découpait sur TOUT " - ", mais un
-    même défaut peut contenir des tirets internes qui n'ont rien à voir avec une
-    séparation entre défauts (ex: MACH0355 "CHARPENTE Structure - Tablier -
-    Portillon : Remettre en état le panneau inferieur." = UN SEUL défaut dont le
-    libellé énumère 3 sous-éléments avec des tirets, PAS 3 défauts). Découper
-    plutôt sur ". - " (point suivi d'un tiret) est plus sûr : c'est la marque
-    d'une phrase déjà terminée avant un nouveau bloc catégorie/description.
-    Contrepartie assumée : un cas où deux défauts s'enchaînent SANS point avant
-    le tiret (observé une fois sur MACH0103, "...mission complémentaire -
-    Protecteurs : ...") reste fusionné en une seule ligne au lieu de deux. C'est
-    un sous-découpage (comportement identique à avant cette fonctionnalité), pas
-    un sur-découpage qui inventerait des lignes fausses : le compromis est
-    délibéré, on préfère rater un découpage que produire un défaut fantôme.
+    Règle réelle (établie le 29/07, revue Antho sur RA55432737-017-1) : Apave
+    termine CHAQUE observation par un tiret en FIN DE LIGNE. Le nombre de défauts
+    d'un équipement est donc exactement le nombre de lignes se terminant par un
+    tiret. Vérifié sur les 11 équipements à défauts du rapport machines, et
+    cohérent avec les badges numérotés de la page de synthèse (MACH0337 -> 2,
+    MACH0103 -> 2, MACH0105 -> 2, MACH0074 -> 1, MACH0076 -> 1).
+
+    Historique des deux essais ratés, pour ne pas y revenir :
+    1. Découpage sur TOUT " - " : sur-découpage. Un même défaut contient des
+       tirets internes d'énumération (ex: "CHARPENTE Structure - Tablier -
+       Portillon : ..." = UN défaut listant 3 sous-éléments, pas 3 défauts).
+    2. Découpage sur ". - " (point suivi d'un tiret) : faux dans les DEUX sens,
+       et c'est ce qu'Antho a relevé le 29/07.
+       - Sous-découpage sur MACH0103 : le premier défaut se termine par
+         "...mission complémentaire -", sans point avant le tiret -> les 2
+         défauts étaient fusionnés en 1 seule ITV.
+       - SUR-découpage sur MACH0074/MACH0076 : le PDF est en 2 colonnes
+         (catégorie à gauche, texte à droite) et pdfplumber entrelace les deux.
+         Le texte "...fuites externes. -" est suivi, à la ligne, du reste du
+         libellé de catégorie ("FLUIDES"). Un split sur ". - " coupait donc
+         juste là et fabriquait un faux défaut "FLUIDES." -> 2 ITV au lieu d'1.
+
+    Le tiret en fin de ligne règle les deux cas d'un coup : il ignore les tirets
+    d'énumération (jamais en fin de ligne), et il ne se laisse pas piéger par un
+    fragment de catégorie rejeté après le terminateur (ce fragment est rattaché
+    au défaut précédent au lieu de devenir une ligne à lui seul).
     """
-    morceaux = [m.strip() for m in re.split(r"\.\s*-\s*", texte_observations)]
-    return [m if m.endswith(".") else f"{m}." for m in morceaux if m]
+    lignes = [l.strip() for l in texte_observations.splitlines() if l.strip()]
+    if not lignes:
+        return []
+
+    defauts: list[str] = []
+    courant: list[str] = []
+    for ligne in lignes:
+        if ligne.endswith("-"):
+            # Fin d'observation : on retire le tiret terminateur et on ferme le défaut.
+            courant.append(ligne.rstrip("- ").strip())
+            defauts.append(" ".join(p for p in courant if p))
+            courant = []
+        else:
+            courant.append(ligne)
+
+    # Lignes restantes après le dernier terminateur : ce sont des fragments de
+    # libellé de catégorie rejetés par la mise en page 2 colonnes (ex: "FLUIDES"
+    # sur MACH0074). Ils appartiennent au défaut précédent, pas à un nouveau.
+    # Si aucun terminateur n'a été trouvé du tout, l'ensemble forme un défaut unique.
+    if courant:
+        reste = " ".join(courant)
+        if defauts:
+            defauts[-1] = f"{defauts[-1]} {reste}".strip()
+        else:
+            defauts.append(reste)
+
+    return [d if d.endswith(".") else f"{d}." for d in (x.strip() for x in defauts) if d]
 
 
 def _extraire_defauts(bloc: str) -> list[str]:

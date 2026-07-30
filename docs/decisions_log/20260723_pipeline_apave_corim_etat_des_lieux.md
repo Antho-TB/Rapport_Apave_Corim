@@ -256,3 +256,59 @@ re-reconnaître des caractères déjà connus, en ajoutant un risque de confusio
 caractères et d'accents, pour un gain nul sur la segmentation en colonnes. Chantier
 reporté après la démo : il touche le coeur de l'extraction, donc à ne pas livrer à
 quelques heures d'une présentation métier.
+
+## Addendum 2026-07-29 (ter) - Le vrai séparateur de défauts est le tiret en fin de ligne
+
+Revue Antho sur `RA55432737-017-1` : MACH0103 sortait 1 ITV au lieu de 2, MACH0074 et
+MACH0076 sortaient 2 ITV au lieu de 1. Diagnostic : le découpage sur `". - "` (point suivi
+d'un tiret, décision du 22/07) est faux dans les DEUX sens, et le contre-exemple annoncé
+comme "compromis assumé" dans l'addendum du 22/07 était en réalité un bug à part entière.
+
+**Règle réelle, établie en relisant le texte brut ligne par ligne :** Apave termine chaque
+observation par un tiret en FIN DE LIGNE. Le nombre de défauts d'un équipement est donc
+exactement le nombre de lignes se terminant par un tiret. Vérifié sur les 11 équipements à
+défauts du rapport machines, et cohérent avec les badges numérotés de la page de synthèse
+(MACH0337 -> 2, MACH0103 -> 2, MACH0105 -> 2, MACH0074 -> 1, MACH0076 -> 1).
+
+Pourquoi `". - "` échouait, dans les deux sens :
+
+- **Sous-découpage (MACH0103)** : le premier défaut se termine par "...mission
+  complémentaire -", sans point avant le tiret. Aucune coupe, les 2 défauts fusionnaient
+  en 1 seule ITV.
+- **Sur-découpage (MACH0074/MACH0076)** : c'est le même problème de mise en page 2 colonnes
+  décrit dans l'addendum précédent, mais son effet réel était pire que "un fragment
+  bizarre". Le libellé de catégorie ("EQUIPEMENT HYDRAULIQUE / PNEUMATIQUE / AUTRES
+  FLUIDES") est entrelacé par pdfplumber avec le texte de l'observation, et son dernier
+  morceau ("FLUIDES") atterrit APRÈS le "...fuites externes. -". Le split sur ". - "
+  coupait pile là et fabriquait une ITV fantôme "FLUIDES." : une intervention inexistante
+  envoyée dans Corim, pas juste un texte mal formaté.
+
+Le tiret en fin de ligne règle les deux cas d'un coup : il ignore les tirets d'énumération
+internes (jamais en fin de ligne, ce qui préserve le cas MACH0355 "Structure - Tablier -
+Portillon" = 1 défaut), et les fragments de catégorie rejetés après le dernier terminateur
+sont rattachés au défaut précédent au lieu de devenir une ligne à eux seuls.
+
+Conséquence sur `_extraire_observations` : la fonction conserve désormais les retours à la
+ligne au lieu d'aplatir le texte immédiatement. L'information "fin de ligne" est le signal
+de découpage, elle était détruite par le recollage prématuré. Le recollage se fait après,
+une fois chaque défaut isolé.
+
+⚠️ Effet de bord à connaître : le bug de mise en page 2 colonnes n'est PAS corrigé pour
+autant. Le COMPTE_RENDU de MACH0074/0076 contient toujours le libellé de catégorie
+entrelacé au milieu du texte ("EQUIPEMENT HYDRAULIQUE / Équipements et canalisations : Des
+composants hydrauliques PNEUMATIQUE / AUTRES présentent des fuites externes. FLUIDES."). Le
+COMPTE de lignes est maintenant juste, la LISIBILITÉ du texte reste dégradée sur ces
+rapports. Le fix propre (extraction par coordonnées) reste le chantier post-démo.
+
+**Contrôle de non-régression ajouté au test** : pour chaque équipement, nombre d'ITV de cas
+DEFAUT == nombre de lignes terminées par un tiret dans ses Observations. Résultat sur les 3
+rapports : `A55432737-017-1` 19 ITV, `A59735423-009-1` 7 ITV, `A59215196-010-1` 33 ITV,
+zéro écart, zéro compte-rendu vide. Les 2 seuls écarts apparents (MACH0370, MACH0448) sont
+les cas "Par ailleurs" (clôture assortie d'une remarque, sans section Observations), qui
+produisent légitimement 1 ITV sans terminateur tiret.
+
+Junior Tip : quand un découpage de texte se trompe dans les deux sens à la fois (parfois
+trop, parfois pas assez), c'est presque toujours qu'on découpe sur le mauvais signal. Ici
+on cherchait une ponctuation de fin de phrase (". -") là où le format encodait la fin d'un
+bloc par sa POSITION (tiret en fin de ligne). Ajouter des exceptions à la regex n'aurait
+fait que déplacer le problème, il fallait changer de signal.
